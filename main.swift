@@ -51,8 +51,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.ignoresMouseEvents = true
         window.contentView = web
 
-        let dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        // Inside a .app the assets live in Contents/Resources/web; run from a plain
+        // checkout they sit next to the executable.
+        let beside = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
             .deletingLastPathComponent().appendingPathComponent("web")
+        let bundled = Bundle.main.resourceURL?.appendingPathComponent("web")
+        let dir = [bundled, beside].compactMap { $0 }
+            .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) } ?? beside
         web.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
 
         // Clicks pass through the overlay except over the buttons.
