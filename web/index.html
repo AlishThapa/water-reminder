@@ -1,0 +1,1151 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+  #choices { position: fixed; left: 50%; display: flex; gap: 12px; transform: translate(-50%, 16px) scale(.85);
+    opacity: 0; pointer-events: none; transition: transform .45s cubic-bezier(.34,1.56,.64,1), opacity .25s; }
+  #choices.show { opacity: 1; transform: translate(-50%, 0) scale(1); pointer-events: auto; }
+  button { font: 600 17px -apple-system, system-ui; letter-spacing: -.2px; padding: 13px 24px; border: 0; border-radius: 16px;
+    cursor: pointer; transition: transform .18s cubic-bezier(.34,1.56,.64,1), filter .15s;
+    box-shadow: 0 10px 30px rgba(0,0,0,.2), 0 1px 0 rgba(255,255,255,.5) inset; }
+  button:hover { transform: scale(1.05); }
+  button:active { transform: scale(.94); filter: brightness(.92); }
+  #yes { background: #0a84ff; color: #fff; }
+  #later { background: rgba(255,255,255,.85); color: #1c1c1e; backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="choices"><button id="yes">Yes 💧</button><button id="later">Remind me later</button></div>
+<script>window.onerror = (m, u, l) => window.webkit?.messageHandlers?.app?.postMessage('err:' + m + ' @' + l);</script>
+<script src="three.min.js"></script>
+<script src="RoomEnvironment.js"></script>
+<script>
+// Memoji-style character built from primitives, animated procedurally (springs + simple physics),
+// moving across a full-screen transparent overlay. World units are screen points, origin at screen centre.
+const W = innerWidth, H = innerHeight;
+const post = msg => window.webkit?.messageHandlers?.app?.postMessage(msg);
+
+// ---------- renderer / camera / lighting ----------
+// keeping the drawing buffer costs frame hitches; only --snapshot (which reads the canvas back) needs it
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('c'), antialias: true, alpha: true, preserveDrawingBuffer: !!window.SNAPSHOT });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(W, H, false);
+renderer.outputEncoding = THREE.sRGBEncoding;
+renderer.toneMapping = THREE.NoToneMapping;
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new THREE.RoomEnvironment(), 0.04).texture;
+const FOV = 28, camDist = (H / 2) / Math.tan(THREE.MathUtils.degToRad(FOV / 2));
+const camera = new THREE.PerspectiveCamera(FOV, W / H, 10, camDist * 3);
+camera.position.set(0, 0, camDist);
+const keyL = new THREE.DirectionalLight(0xfff1e0, 0.95); keyL.position.set(-0.7, 1, 1.1);
+const rimL = new THREE.DirectionalLight(0xcfe3ff, 0.7); rimL.position.set(1, 0.6, -0.8);
+scene.add(keyL, rimL, new THREE.HemisphereLight(0xffffff, 0x8a7a70, 0.3));
+
+// ---------- materials & helpers ----------
+const M = (color, o = {}) => new THREE.MeshPhysicalMaterial({ color, roughness: 0.55, envMapIntensity: 0.22, ...o });
+const skin = M(0xe89c70, { roughness: 0.55, clearcoat: 0.12, clearcoatRoughness: 0.6, sheen: 0.12, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffc4a0) });
+const skinDark = M(0xd88f6c, { roughness: 0.6 });
+const hair = M(0x2b170a, { roughness: 0.45, clearcoat: 0.3, clearcoatRoughness: 0.35, sheen: 0.2, sheenColor: new THREE.Color(0x8a5a38) });
+const hoodie = M(0x4b48e0, { roughness: 0.85, sheen: 0.15, sheenRoughness: 0.8, sheenColor: new THREE.Color(0x9c9bff) });
+const hoodieDark = M(0x3532b0, { roughness: 0.9 });
+const cord = M(0xf5f5f7, { roughness: 0.6 });
+const pants = M(0x1b1d24, { roughness: 0.9, sheen: 0.1, sheenColor: new THREE.Color(0x555a66) });
+const shoe = M(0xfdfdfd, { roughness: 0.35, clearcoat: 0.6 });
+const sole = M(0xff375f, { roughness: 0.5 });
+const sclera = M(0xffffff, { roughness: 0.08, clearcoat: 1, envMapIntensity: 0.6 });
+const lash = M(0x1a0f08, { roughness: 0.5 });
+const glint = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const mouthIn = M(0x4a0f19, { roughness: 0.7, side: THREE.DoubleSide });
+const teethM = M(0xffffff, { roughness: 0.25, clearcoat: 0.6, side: THREE.DoubleSide });
+const tongueM = M(0xe0607a, { roughness: 0.5, side: THREE.DoubleSide });
+const lipM = M(0xd77a68, { roughness: 0.45, clearcoat: 0.3 });
+const blushM = new THREE.MeshBasicMaterial({ color: 0xff7a8a, transparent: true, opacity: 0, depthWrite: false });
+const tearM = M(0x8fdcff, { roughness: 0.03, clearcoat: 1, transparent: true, opacity: 0 });
+const wood = M(0xc68a4e, { roughness: 0.6 });
+const starM = new THREE.MeshBasicMaterial({ color: 0xffd60a, transparent: true, opacity: 0 });
+
+// iris as a painted texture: dark limbal ring, warm brown, lighter flecks, big pupil
+const irisTex = (() => {
+  const c = Object.assign(document.createElement('canvas'), { width: 256, height: 256 }), g = c.getContext('2d');
+  const gr = g.createRadialGradient(128, 128, 20, 128, 128, 128);
+  gr.addColorStop(0, '#2a1608'); gr.addColorStop(0.32, '#7a4a24'); gr.addColorStop(0.7, '#5a3216'); gr.addColorStop(0.9, '#2e1a0c'); gr.addColorStop(1, '#1a0d05');
+  g.fillStyle = gr; g.beginPath(); g.arc(128, 128, 128, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(200,140,80,.35)'; g.lineWidth = 3;
+  for (let i = 0; i < 48; i++) { const a = i / 48 * Math.PI * 2; g.beginPath(); g.moveTo(128 + Math.cos(a) * 46, 128 + Math.sin(a) * 46); g.lineTo(128 + Math.cos(a) * 100, 128 + Math.sin(a) * 100); g.stroke(); }
+  g.fillStyle = '#060302'; g.beginPath(); g.arc(128, 128, 44, 0, Math.PI * 2); g.fill();
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+})();
+const irisM = new THREE.MeshPhysicalMaterial({ map: irisTex, roughness: 0.05, clearcoat: 1, transparent: true });
+
+const sphere = (r, ws = 40, hs = 28) => new THREE.SphereGeometry(r, ws, hs);
+const cap = (r, len) => new THREE.CapsuleGeometry(r, len, 12, 24);
+function mesh(geo, mat, parent, [x, y, z] = [0, 0, 0], [sx, sy, sz] = [1, 1, 1]) {
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.scale.set(sx, sy, sz); parent.add(m); return m;
+}
+function pivot(parent, x = 0, y = 0, z = 0) { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g; }
+// smooth rotationally-symmetric shape from a (radius, height) profile
+const lathe = pts => new THREE.LatheGeometry(new THREE.SplineCurve(pts.map(([r, h]) => new THREE.Vector2(r, h))).getPoints(48), 48);
+let seed = 7; const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+// ---------- character rig ----------
+// root sits at the feet; yaw turns him; tiltG pitches/rolls him together with his ride; body squashes/stretches from the feet.
+const root = pivot(scene), yawG = pivot(root), tiltG = pivot(yawG), body = pivot(tiltG);
+root.scale.setScalar(Math.min(1.05, H / 950));
+const hips = pivot(body, 0, 92, 0);
+function leg(side) {
+  const hip = pivot(hips, side * 18, 0, 0);
+  mesh(cap(15, 26), pants, hip, [0, -22, 0]);
+  const knee = pivot(hip, 0, -44, 0);
+  mesh(cap(13.5, 22), pants, knee, [0, -17, 0]);
+  mesh(new THREE.TorusGeometry(12, 3, 10, 24), pants, knee, [0, -32, 0]).rotation.x = Math.PI / 2;
+  const foot = pivot(knee, 0, -38, 0);
+  mesh(sphere(14, 40, 24), shoe, foot, [0, 0, 9], [1, 0.72, 1.55]);
+  mesh(new THREE.CylinderGeometry(14.5, 14.5, 5, 32), sole, foot, [0, -7, 9], [1, 1, 1.55]);
+  mesh(sphere(5, 16, 12), sole, foot, [side * 13, 1, 9], [0.4, 1, 2.2]);
+  return { hip, knee };
+}
+const legR = leg(-1), legL = leg(1);
+const torso = pivot(hips);
+// hoodie body: rounded, a bit wider at the chest, with hood, cords and kangaroo pocket
+mesh(lathe([[0, -6], [30, -4], [41, 14], [44, 46], [43, 76], [37, 98], [20, 110], [0, 112]]), hoodie, torso, [0, 0, 0], [1, 1, 0.78]);
+mesh(sphere(30, 40, 24), hoodie, torso, [0, 100, -20], [1.35, 0.75, 0.75]);
+mesh(new THREE.TorusGeometry(19, 7, 16, 32), hoodieDark, torso, [0, 106, 2], [1, 1, 0.9]).rotation.x = Math.PI / 2.3;
+for (const s of [-1, 1]) {
+  mesh(new THREE.CylinderGeometry(1.6, 1.6, 30, 8), cord, torso, [s * 8, 84, 33.5]).rotation.z = s * 0.05;
+  mesh(cap(2.6, 5), cord, torso, [s * 8.8, 67, 33.5]);
+}
+{
+  const pocket = new THREE.Shape();
+  pocket.moveTo(-26, 0); pocket.lineTo(26, 0); pocket.quadraticCurveTo(30, 16, 18, 26); pocket.lineTo(-18, 26); pocket.quadraticCurveTo(-30, 16, -26, 0);
+  const p = mesh(new THREE.ExtrudeGeometry(pocket, { depth: 2, bevelThickness: 1.2, bevelSize: 1.2, bevelSegments: 3 }), hoodieDark, torso, [0, 18, 32.5]);
+  p.rotation.x = -0.12;
+}
+function arm(side) {
+  const sh = pivot(torso, side * 41, 88, 0);
+  mesh(sphere(15), hoodie, sh, [0, -2, 0]);
+  mesh(cap(13, 24), hoodie, sh, [0, -20, 0]);
+  const el = pivot(sh, 0, -40, 0);
+  mesh(cap(12, 20), hoodie, el, [0, -15, 0]);
+  mesh(new THREE.TorusGeometry(10.5, 3.2, 10, 24), hoodieDark, el, [0, -29, 0]).rotation.x = Math.PI / 2;
+  const hand = pivot(el, 0, -38, 0);
+  mesh(sphere(11), skin, hand, [0, -1, 0], [1, 1.15, 0.8]);                 // palm
+  const thumb = mesh(cap(4, 7), skin, hand, [-side * 9, 3, 4]); thumb.rotation.z = side * 0.8;
+  mesh(cap(4.2, 10), skin, hand, [0, -11, 1], [1.9, 1, 0.9]);               // fingers (mitten)
+  return { sh, el, hand };
+}
+const armR = arm(-1), armL = arm(1); // right hand (screen left) holds the banner pole
+const neck = pivot(torso, 0, 106, 0);
+mesh(new THREE.CylinderGeometry(14, 16, 22, 24), skin, neck, [0, 4, 0]);
+const head = pivot(neck, 0, 12, 0);
+const face = pivot(head, 0, 60, 4);
+// head: big round cranium, fuller cheeks and a soft chin
+mesh(sphere(62, 72, 56), skin, face, [0, 4, 0], [1, 1.02, 0.97]);
+mesh(sphere(30, 48, 32), skin, face, [0, -26, 12], [1.45, 0.9, 1.1]);
+for (const s of [-1, 1]) {
+  const ear = pivot(face, s * 60, -2, -4);
+  mesh(sphere(13), skin, ear, [0, 0, 0], [0.42, 1, 0.75]);
+  mesh(sphere(8), skinDark, ear, [s * 1.6, 0, 1], [0.25, 0.75, 0.55]);
+}
+mesh(sphere(9.5), skin, face, [0, -9, 58], [1.05, 0.85, 0.8]);              // nose tip
+for (const s of [-1, 1]) mesh(sphere(4), skin, face, [s * 7.5, -12, 56], [1, 0.8, 0.8]); // nostril wings
+// hair: a scalp cap plus chunky sculpted clumps sweeping up and to the side (Memoji style)
+const hairG = pivot(face, 0, 4, 0);
+const hcap = mesh(new THREE.SphereGeometry(63, 64, 32, 0, Math.PI * 2, 0, Math.PI * 0.52), hair, hairG, [0, 0, -2], [1, 1.02, 0.98]);
+hcap.rotation.x = -0.42;
+mesh(sphere(61), hair, hairG, [0, -6, -10], [1.0, 0.95, 0.92]);
+for (const s of [-1, 1]) mesh(sphere(16), hair, hairG, [s * 52, 10, 4], [0.5, 1.4, 1.1]); // sideburn area
+for (let i = 0; i < 60; i++) {
+  // chunky clumps on the scalp only (above the hairline), combed back and to the side; front ones sweep up into a quiff
+  const p = Math.sqrt(rand()) * 1.25, a = rand() * Math.PI * 2;
+  const n = new THREE.Vector3(Math.sin(p) * Math.cos(a), Math.cos(p), Math.sin(p) * Math.sin(a));
+  if (n.y < 0.28 || (n.z > 0.45 && n.y < 0.62)) continue;
+  const front = n.z > 0.3;
+  const comb = front ? new THREE.Vector3(0.35, 1, 0.25) : new THREE.Vector3(0.55, 0.15, -0.8);
+  const tangent = comb.sub(n.clone().multiplyScalar(n.dot(comb))).normalize();
+  const m = mesh(sphere(1, 20, 14), hair, hairG, [n.x * 61, n.y * 62, n.z * 60], [11 + rand() * 5, 6 + rand() * 3, (front ? 20 : 26) + rand() * 10]);
+  m.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(), tangent, n));
+}
+function eye(side) {
+  const g = pivot(face, side * 22, 4, 50);
+  g.rotation.y = side * 0.3;
+  const lid = pivot(g); // scaled on y to blink / squint
+  mesh(sphere(14, 48, 32), sclera, lid, [0, 0, 0], [1, 1.12, 0.62]);
+  const look = pivot(lid, 0, 0, 8.4);
+  mesh(new THREE.CircleGeometry(10.5, 48), irisM, look, [0, 0, 0.2], [1, 1.08, 1]);
+  mesh(sphere(2.6, 16, 12), glint, look, [3.4, 4.2, 1.4], [1, 1, 0.4]);
+  mesh(sphere(1.2, 12, 8), glint, look, [-3.6, -3.4, 1.4], [1, 1, 0.4]);
+  // upper lash line follows the lid
+  const lashArc = mesh(new THREE.TorusGeometry(14.2, 1.9, 10, 40, Math.PI * 0.95), lash, lid, [0, 1, 1.5], [1, 1.12, 0.62]);
+  lashArc.rotation.z = Math.PI * 0.025;
+  // eyebrow: tapered, thick at the inner end
+  const browP = pivot(face, side * 23, 26, 56);
+  browP.rotation.y = side * 0.32;
+  const bs = new THREE.Shape();
+  bs.moveTo(-side * 12, -3.6); bs.quadraticCurveTo(0, -2.5, side * 13, -1.2); bs.quadraticCurveTo(side * 14, 1, side * 12, 1.4);
+  bs.quadraticCurveTo(0, 3.2, -side * 12, 4); bs.quadraticCurveTo(-side * 14, 0, -side * 12, -3.6);
+  mesh(new THREE.ExtrudeGeometry(bs, { depth: 3, bevelThickness: 1.4, bevelSize: 1.2, bevelSegments: 4, curveSegments: 16 }), hair, browP, [0, 0, -1.5]);
+  const blush = mesh(new THREE.CircleGeometry(12, 32), blushM, face, [side * 34, -18, 50]);
+  blush.rotation.y = side * 0.6;
+  return { lid, look, browP };
+}
+const eyeR = eye(-1), eyeL = eye(1);
+const mouth = pivot(face, 0, -30, 55.5);
+mouth.rotation.x = 0.28;
+const mouthMesh = new THREE.Mesh(new THREE.BufferGeometry(), mouthIn), teethMesh = new THREE.Mesh(new THREE.BufferGeometry(), teethM),
+  tongueMesh = new THREE.Mesh(new THREE.BufferGeometry(), tongueM), lipMesh = new THREE.Mesh(new THREE.BufferGeometry(), lipM);
+teethMesh.position.z = 0.3; tongueMesh.position.z = 0.2; lipMesh.position.z = -0.4;
+mouth.add(lipMesh, mouthMesh, tongueMesh, teethMesh);
+const tear = mesh(sphere(3.8, 20, 14), tearM, face, [-25, -8, 54], [1, 1.35, 1]);
+const stars = pivot(face, 0, 78, 0);
+for (let i = 0; i < 3; i++) mesh(new THREE.OctahedronGeometry(7), starM, stars, [Math.cos(i * 2.09) * 60, 0, Math.sin(i * 2.09) * 60], [1, 1, 0.45]);
+
+// mouth: dark interior between an upper and lower curve, teeth along the top, tongue at the bottom,
+// a soft lip rim around it. smile in [-1, 1], open in [0, 1]
+let lastMouth = '';
+function updateMouth(smile, open) {
+  const k = smile.toFixed(3) + open.toFixed(3);
+  if (k === lastMouth) return;
+  lastMouth = k;
+  const pos = Math.max(0, smile);
+  const w = 14 + 9 * pos - 6 * open * (1 - pos);
+  const top = -smile * 4.5;
+  const bot = top - 2.6 - open * 22 - Math.max(0, smile - 0.4) * 13;
+  const shape = (a, b, ww = w) => { const s = new THREE.Shape(); s.moveTo(-ww, 0); s.quadraticCurveTo(0, a * 2, ww, 0); s.quadraticCurveTo(0, b * 2, -ww, 0); return s; };
+  const set = (m, g) => { m.geometry.dispose(); m.geometry = g; };
+  set(mouthMesh, new THREE.ShapeGeometry(shape(top, bot), 20));
+  set(lipMesh, new THREE.ShapeGeometry(shape(top + 2.2, bot - 2.4, w + 2.6), 20));
+  const gap = bot - top;
+  set(teethMesh, gap < -6 ? new THREE.ShapeGeometry(shape(top - 0.2, top + Math.max(gap * 0.32, -6), w * 0.92), 20) : new THREE.BufferGeometry());
+  set(tongueMesh, gap < -10 ? new THREE.ShapeGeometry(shape(bot + Math.min(-gap * 0.45, 9), bot + 0.3, w * 0.6), 20) : new THREE.BufferGeometry());
+}
+
+// ---------- banner on a pole ----------
+const boardCanvas = Object.assign(document.createElement('canvas'), { width: 1024, height: 512 });
+const boardTex = new THREE.CanvasTexture(boardCanvas);
+boardTex.encoding = THREE.sRGBEncoding;
+boardTex.anisotropy = 8;
+const banner = pivot(scene);
+const bannerInner = pivot(banner);
+mesh(new THREE.CylinderGeometry(3, 3, 250, 16), wood, bannerInner, [0, 95, 0]);
+const board = pivot(bannerInner, 58, 270, 0);
+const rr = (w, h, r) => { const s = new THREE.Shape(); s.moveTo(-w / 2 + r, -h / 2); s.lineTo(w / 2 - r, -h / 2); s.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
+  s.lineTo(w / 2, h / 2 - r); s.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2); s.lineTo(-w / 2 + r, h / 2); s.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
+  s.lineTo(-w / 2, -h / 2 + r); s.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2); return s; };
+mesh(new THREE.ExtrudeGeometry(rr(250, 125, 22), { depth: 6, bevelThickness: 2, bevelSize: 2, bevelSegments: 4, curveSegments: 12 }), M(0xffffff, { roughness: 0.3, clearcoat: 0.6 }), board, [0, 0, -3]);
+mesh(new THREE.PlaneGeometry(250, 125), new THREE.MeshBasicMaterial({ map: boardTex, transparent: true, toneMapped: false }), board, [0, 0, 5.2]);
+function setBoard(text, color) {
+  const g = boardCanvas.getContext('2d');
+  g.clearRect(0, 0, 1024, 512);
+  g.fillStyle = '#ffffff';
+  g.beginPath(); g.roundRect(6, 6, 1012, 500, 88); g.fill();
+  g.lineWidth = 22; g.strokeStyle = color;
+  g.beginPath(); g.roundRect(22, 22, 980, 468, 74); g.stroke();
+  g.fillStyle = '#1c1c1e'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = '700 104px -apple-system, system-ui';
+  const lines = text.split('\n');
+  lines.forEach((l, i) => g.fillText(l, 512, 262 + (i - (lines.length - 1) / 2) * 128));
+  boardTex.needsUpdate = true;
+}
+
+// soft contact shadow
+const shadowCanvas = Object.assign(document.createElement('canvas'), { width: 128, height: 128 });
+{ const g = shadowCanvas.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(0,0,0,.35)'); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(0, 0, 128, 128); }
+const shadow = mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(shadowCanvas), transparent: true, depthWrite: false }), scene);
+
+// ladder he climbs up when coming in from the bottom
+const ladder = pivot(scene);
+const RUNG = 38;
+{
+  const len = H + 200;
+  for (const sx of [-46, 46]) mesh(new THREE.BoxGeometry(8, len, 9), wood, ladder, [sx, -len / 2, 0]);
+  for (let ry = -16; ry > -len; ry -= RUNG) mesh(new THREE.CylinderGeometry(3.4, 3.4, 92, 12), wood, ladder, [0, ry, 0]).rotation.z = Math.PI / 2;
+}
+ladder.visible = false;
+let ladderY = 0;
+
+// ---------- rides (under tiltG, so they turn and tilt with him) ----------
+const chrome = M(0xe8e8ec, { metalness: 1, roughness: 0.18, envMapIntensity: 1 });
+const rubber = M(0x1a1a1c, { roughness: 0.9 });
+const blackM = M(0x26262a, { roughness: 0.5 });
+const paint = M(0x8c1426, { roughness: 0.3, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.08 });
+function rod(r, a, b, mat, parent) { // cylinder from point a to point b
+  const A = new THREE.Vector3(...a), B = new THREE.Vector3(...b), d = B.clone().sub(A);
+  const m = mesh(new THREE.CylinderGeometry(r, r, d.length(), 12), mat, parent, A.add(B).multiplyScalar(0.5).toArray());
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+  return m;
+}
+
+// skateboard: long axis along x (he rides side-on, facing us), deck top at y≈13
+const skate = pivot(tiltG), skateDeck = pivot(skate, 0, 11, 0);
+{
+  const deck = mesh(new THREE.ExtrudeGeometry(rr(124, 30, 14), { depth: 2.4, bevelThickness: 0.8, bevelSize: 0.8, bevelSegments: 2 }), M(0xff9f0a, { roughness: 0.45, clearcoat: 0.5 }), skateDeck, [0, -1.2, 0]);
+  deck.rotation.x = -Math.PI / 2;
+  mesh(new THREE.ShapeGeometry(rr(118, 26, 12)), blackM, skateDeck, [0, 2.1, 0]).rotation.x = -Math.PI / 2;
+  for (const sx of [-40, 40]) {
+    mesh(new THREE.BoxGeometry(12, 5, 22), chrome, skateDeck, [sx, -4, 0]);
+    for (const sz of [-13, 13]) mesh(new THREE.CylinderGeometry(5.4, 5.4, 6, 20), M(0x63e6be, { roughness: 0.4 }), skateDeck, [sx, -6.6, sz]).rotation.x = Math.PI / 2;
+  }
+}
+
+// surfboard: same stance as the skateboard, top at y≈10, plus the wave he rides (under root, so it doesn't yaw)
+const surf = pivot(tiltG, 0, 6, 0);
+mesh(sphere(1, 48, 20), M(0xfbfbfd, { roughness: 0.25, clearcoat: 1 }), surf, [0, 0, 0], [80, 3.6, 22]);
+mesh(sphere(1, 40, 12), M(0x0a84ff, { roughness: 0.3, clearcoat: 1 }), surf, [0, 0.7, 0], [72, 3.3, 3.5]);
+const fin = mesh(new THREE.BoxGeometry(12, 12, 1.6), blackM, surf, [-62, -7, 0]);
+const wave = pivot(root);
+const waterM = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.08, clearcoat: 1, clearcoatRoughness: 0.04, envMapIntensity: 0.9,
+  transparent: true, opacity: 0.93, side: THREE.DoubleSide });
+// side profile of a curling wave travelling towards +x (crest behind him, lip curling over a hollow face, a thin tongue
+// of water under the board), swept along z: full height behind him, flattening to the tongue in front and at the far end
+const wavePath = new THREE.Path();
+wavePath.moveTo(-430, 0);
+wavePath.bezierCurveTo(-320, 4, -240, 60, -190, 120);
+wavePath.bezierCurveTo(-160, 160, -120, 184, -70, 182);
+wavePath.bezierCurveTo(-30, 180, -4, 158, -8, 128);
+wavePath.bezierCurveTo(-22, 142, -48, 140, -66, 122);
+wavePath.bezierCurveTo(-94, 96, -110, 46, -90, 20);
+wavePath.bezierCurveTo(-76, 6, -40, 3, 0, 2);
+wavePath.lineTo(150, 0);
+const WU = 140, WV = 36, waveProfile = wavePath.getSpacedPoints(WU - 1);
+const waveGeo = new THREE.PlaneGeometry(1, 1, WU - 1, WV - 1), waveBase = [];
+{
+  const col = [], c = new THREE.Color(), deep = new THREE.Color(0x0a5ed8), mid = new THREE.Color(0x27b4ff), light = new THREE.Color(0x8ff0ff), foam = new THREE.Color(0xffffff);
+  for (let j = 0; j < WV; j++) for (let i = 0; i < WU; i++) {
+    const v = j / (WV - 1), z = -260 + v * 320;
+    const h = THREE.MathUtils.smoothstep(z, -262, -200) * (1 - THREE.MathUtils.smoothstep(z, -70, 10)) * 0.97 + 0.03;
+    const P = waveProfile[i], u = i / (WU - 1);
+    waveBase.push(P.x, P.y, z, h, u);
+    const hy = P.y / 182;
+    c.copy(deep).lerp(mid, Math.min(1, hy * 1.6)).lerp(light, Math.max(0, hy - 0.55) * 2);
+    if (u > 0.36 && u < 0.5) c.lerp(foam, 0.85 * Math.sin((u - 0.36) / 0.14 * Math.PI) * h); // whitewater on the lip
+    if (P.y < 4 && P.x > 100) c.lerp(foam, 0.7);                                               // foam edge of the tongue
+    col.push(c.r, c.g, c.b);
+  }
+  waveGeo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+}
+mesh(waveGeo, waterM, wave).frustumCulled = false;
+function updateWave(t, amp) { // ripples running back along the wave, the lip breathing
+  const pos = waveGeo.attributes.position;
+  for (let k = 0, n = 0; k < pos.count; k++, n += 5) {
+    const bx = waveBase[n], by = waveBase[n + 1], z = waveBase[n + 2], h = waveBase[n + 3], u = waveBase[n + 4];
+    const rip = Math.sin(bx * 0.045 + t * 9 + z * 0.02) * 2.2 + Math.sin(bx * 0.11 - t * 5 + z * 0.05) * 1.1;
+    const lip = u > 0.33 && u < 0.52 ? Math.sin(t * 4 + z * 0.03) * 6 : 0;
+    pos.setXYZ(k, bx + lip, (by + rip * Math.min(1, by / 20 + 0.3)) * h, z);
+  }
+  pos.needsUpdate = true; waveGeo.computeVertexNormals();
+}
+updateWave(0, 1);
+
+// bullet bike: forward is +z (he sits facing his direction of travel), seat top at y≈86
+const bike = pivot(tiltG), bikeWheels = [], exhaustTip = new THREE.Object3D();
+{
+  for (const z of [-60, 72]) {
+    const hub = pivot(bike, 0, 31, z), spin = pivot(hub);
+    mesh(new THREE.TorusGeometry(25, 6.5, 14, 40), rubber, spin).rotation.y = Math.PI / 2;
+    mesh(new THREE.TorusGeometry(19.5, 1.6, 8, 40), chrome, spin).rotation.y = Math.PI / 2;
+    for (let i = 0; i < 8; i++) mesh(new THREE.CylinderGeometry(0.7, 0.7, 39, 6), chrome, spin).rotation.x = i * Math.PI / 8;
+    mesh(new THREE.CylinderGeometry(5, 5, 14, 16), chrome, spin).rotation.z = Math.PI / 2;
+    bikeWheels.push(spin);
+    const fender = mesh(new THREE.TorusGeometry(34, 3, 8, 28, Math.PI * 0.72), paint, hub, [0, 0, 0], [1, 1, 2.6]);
+    fender.rotation.y = z < 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
+  mesh(sphere(1, 40, 24), paint, bike, [0, 97, 34], [14, 12, 30]);                       // teardrop tank
+  mesh(sphere(1, 24, 16), chrome, bike, [0, 99, 34], [14.3, 4, 18]);                      // tank badge
+  mesh(cap(9, 40), blackM, bike, [0, 79, -14], [1.5, 1, 0.75]).rotation.x = Math.PI / 2;  // seat
+  mesh(new THREE.BoxGeometry(24, 30, 36), M(0x3a3a40, { metalness: 0.6, roughness: 0.4 }), bike, [0, 48, 14]); // engine
+  for (let i = 0; i < 5; i++) mesh(new THREE.BoxGeometry(28, 2, 24), chrome, bike, [0, 66 + i * 4, 22]);       // cylinder fins
+  rod(3, [0, 88, -40], [0, 100, 60], blackM, bike);
+  rod(3, [0, 100, 60], [0, 46, 30], blackM, bike);
+  for (const s of [-1, 1]) {
+    rod(2.5, [s * 9, 31, -60], [s * 9, 80, -30], chrome, bike);   // rear shocks
+    rod(2.5, [s * 9, 31, -60], [s * 9, 42, 0], blackM, bike);     // swing arm
+    rod(3, [s * 10, 31, 72], [s * 10, 116, 54], chrome, bike);    // fork
+    rod(2.4, [s * 10, 116, 54], [s * 12, 124, 46], chrome, bike); // bar risers
+    rod(3.8, [s * 30, 124, 46], [s * 42, 124, 46], blackM, bike); // grips
+  }
+  rod(2.4, [-32, 124, 46], [32, 124, 46], chrome, bike);          // handlebar
+  mesh(new THREE.CylinderGeometry(14, 12, 12, 32), chrome, bike, [0, 104, 76]).rotation.x = Math.PI / 2; // headlamp
+  mesh(new THREE.CircleGeometry(12, 32), new THREE.MeshBasicMaterial({ color: 0xfff6d0 }), bike, [0, 104, 82.2]);
+  rod(4.5, [14, 36, 20], [14, 36, -66], chrome, bike);            // exhaust pipe
+  mesh(cap(6, 30), chrome, bike, [14, 38, -80]).rotation.x = Math.PI / 2;
+  mesh(sphere(4), new THREE.MeshBasicMaterial({ color: 0xff2d40 }), bike, [0, 64, -96]);
+  exhaustTip.position.set(14, 38, -100); bike.add(exhaustTip);
+}
+
+// plane he jumps out of (top entrance); nose towards +x, mirrored for the other direction
+const plane = pivot(scene), prop = pivot(plane, 128, 0, 0);
+{
+  const white = M(0xf4f4f7, { roughness: 0.35, clearcoat: 0.5 }), red = M(0xff3b30, { roughness: 0.4, clearcoat: 0.5 }), glass = M(0x23323f, { roughness: 0.08, clearcoat: 1 });
+  mesh(cap(30, 170), white, plane).rotation.z = Math.PI / 2;
+  mesh(sphere(31, 32, 20), red, plane, [112, 0, 0], [0.5, 1, 1]);
+  mesh(new THREE.BoxGeometry(70, 7, 330), white, plane, [10, -10, 0]);
+  for (const s of [-1, 1]) mesh(new THREE.BoxGeometry(30, 7.6, 40), red, plane, [10, -10, s * 150]);
+  mesh(new THREE.BoxGeometry(42, 6, 120), white, plane, [-112, 10, 0]);
+  mesh(new THREE.BoxGeometry(50, 56, 5), red, plane, [-114, 38, 0]).rotation.z = -0.35;
+  mesh(sphere(1, 24, 16), glass, plane, [55, 20, 0], [32, 16, 22]);
+  for (let i = 0; i < 4; i++) mesh(new THREE.CircleGeometry(6.5, 20), glass, plane, [12 - i * 24, 6, 29.6]);
+  mesh(new THREE.PlaneGeometry(220, 6), new THREE.MeshBasicMaterial({ color: 0x0a84ff }), plane, [0, -12, 30.2]);
+  mesh(new THREE.PlaneGeometry(22, 34), new THREE.MeshBasicMaterial({ color: 0x1c1c1e }), plane, [-74, 0, 30.4]); // open door
+  mesh(new THREE.BoxGeometry(4, 128, 10), blackM, prop);
+  mesh(new THREE.CircleGeometry(64, 32), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.18, depthWrite: false, side: THREE.DoubleSide }), prop).rotation.y = Math.PI / 2;
+}
+plane.visible = false;
+
+// parachute: hangs from his raised hands, swings about its canopy
+const chuteG = pivot(root, 0, 255, 0);
+const chuteTex = (() => {
+  const c = Object.assign(document.createElement('canvas'), { width: 512, height: 8 }), g = c.getContext('2d');
+  ['#0a84ff', '#ffffff', '#5ac8fa', '#ffffff'].forEach((col, i, a) => { for (let k = i; k < 16; k += a.length) { g.fillStyle = col; g.fillRect(k * 32, 0, 32, 8); } });
+  const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+})();
+const chuteM = M(0xffffff, { map: chuteTex, side: THREE.DoubleSide, transparent: true, roughness: 0.7 });
+const chuteLineM = M(0xffffff, { transparent: true });
+mesh(lathe([[0, 165], [52, 157], [94, 130], [120, 92], [116, 84]]), chuteM, chuteG);
+for (const sx of [-1, 1]) for (const sz of [-1, 1]) rod(0.8, [sx * 52, 0, 0], [sx * 104, 88, sz * 58], chuteLineM, chuteG);
+chuteG.visible = false;
+
+// particles: one pooled instanced mesh for water drops, foam, exhaust smoke and dust (world space)
+const PN = 400, parts = [], pMesh = new THREE.InstancedMesh(sphere(1, 10, 8), new THREE.MeshStandardMaterial({ roughness: 0.15, envMapIntensity: 0.8 }), PN);
+pMesh.frustumCulled = false; scene.add(pMesh);
+const _up = new THREE.Vector3(0, 1, 0), _v = new THREE.Vector3(), _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _c = new THREE.Color();
+for (let i = 0; i < PN; i++) { parts.push({ life: 0 }); pMesh.setMatrixAt(i, _m.makeScale(0, 0, 0)); pMesh.setColorAt(i, _c.set(0xffffff)); }
+let pNext = 0;
+function emit(x, y, z, vx, vy, vz, size, life, color, { g = 1, drag = 0, grow = false } = {}) {
+  const i = pNext; pNext = (pNext + 1) % PN;
+  Object.assign(parts[i], { x, y, z, vx, vy, vz, size, life, max: life, g, drag, grow });
+  pMesh.setColorAt(i, _c.set(color)); pMesh.instanceColor.needsUpdate = true;
+}
+function updateParts(dt, grav) {
+  for (let i = 0; i < PN; i++) {
+    const p = parts[i];
+    if (p.life <= 0) { if (p.on) { p.on = false; pMesh.setMatrixAt(i, _m.makeScale(0, 0, 0)); } continue; }
+    p.on = true;
+    p.life -= dt;
+    const d = Math.exp(-p.drag * dt);
+    p.vx *= d; p.vy = (p.vy - grav * p.g * dt) * d; p.vz *= d;
+    p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
+    const k = 1 - Math.max(0, p.life) / p.max, s = p.life <= 0 ? 0 : p.grow ? p.size * (0.4 + 1.6 * k) * (1 - k * k) : p.size * Math.sqrt(1 - k);
+    if (p.grow) { _q.identity(); _s.setScalar(s); }
+    else { // droplets streak along their velocity
+      const v = Math.hypot(p.vx, p.vy, p.vz) || 1;
+      _q.setFromUnitVectors(_up, _v.set(p.vx / v, p.vy / v, p.vz / v)); _s.set(s * 0.8, s * (1 + Math.min(2.5, v * 0.005)), s * 0.8);
+    }
+    pMesh.setMatrixAt(i, _m.compose(_p.set(p.x, p.y, p.z), _q, _s));
+  }
+  pMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- sound (synthesised with Web Audio, no files) ----------
+const AC = new (window.AudioContext || window.webkitAudioContext)();
+const master = AC.createGain(); master.gain.value = 0.5; master.connect(AC.destination);
+function tone(freq, start, dur, { type = 'sine', vol = 0.3, slideTo, attack = 0.01 } = {}) {
+  const t = AC.currentTime + start, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.05);
+}
+function noise(start, dur, { vol = 0.3, from = 800, to = 800, q = 1, type = 'bandpass' } = {}) {
+  const t = AC.currentTime + start, len = Math.ceil(AC.sampleRate * dur), b = AC.createBuffer(1, len, AC.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  src.buffer = b; f.type = type; f.Q.value = q;
+  f.frequency.setValueAtTime(from, t); f.frequency.exponentialRampToValueAtTime(to, t + dur);
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + dur * 0.3); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f).connect(g).connect(master); src.start(t);
+}
+// sounds that run continuously (wheel rumble, sea, plane engine): build once per show, steer every frame, stop at the end
+const noiseBuf = AC.createBuffer(1, AC.sampleRate * 2, AC.sampleRate);
+{ const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+const loops = [];
+const ramp = (param, v, k = 0.06) => param.setTargetAtTime(v, AC.currentTime, k);
+const panOf = x => THREE.MathUtils.clamp(x / (W / 2), -1, 1) * 0.8;
+function loopNoise(type, freq, q = 1) {
+  const src = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain(), p = AC.createStereoPanner();
+  src.buffer = noiseBuf; src.loop = true; f.type = type; f.frequency.value = freq; f.Q.value = q; g.gain.value = 0;
+  src.connect(f).connect(g).connect(p).connect(master); src.start();
+  const l = { f, g, p, stop() { ramp(g.gain, 0, 0.1); src.stop(AC.currentTime + 0.6); } };
+  loops.push(l); return l;
+}
+function drone() { // prop plane: two detuned saws through a lowpass, chopped by the propeller
+  const o1 = AC.createOscillator(), o2 = AC.createOscillator(), lfo = AC.createOscillator(), lfoG = AC.createGain(),
+    f = AC.createBiquadFilter(), chop = AC.createGain(), g = AC.createGain(), p = AC.createStereoPanner();
+  o1.type = 'sawtooth'; o2.type = 'square'; o1.frequency.value = 86; o2.frequency.value = 87.3;
+  f.type = 'lowpass'; f.frequency.value = 900; lfo.type = 'square'; lfo.frequency.value = 31; lfoG.gain.value = 0.3; chop.gain.value = 0.6; g.gain.value = 0;
+  lfo.connect(lfoG).connect(chop.gain);
+  o1.connect(f); o2.connect(f); f.connect(chop).connect(g).connect(p).connect(master);
+  [o1, o2, lfo].forEach(o => o.start());
+  const l = { o1, o2, g, p, stop() { ramp(g.gain, 0, 0.15); [o1, o2, lfo].forEach(o => o.stop(AC.currentTime + 1)); } };
+  loops.push(l); return l;
+}
+function stopLoops() { loops.forEach(l => l.stop()); loops.length = 0; }
+// bullet bike, modelled the way a real single cylinder sounds: an AudioWorklet fires one exhaust pulse per combustion
+// (every second crank turn: a low pressure thump plus a noise crack, with the lumpy timing of a big single at idle,
+// tappet ticks between, backfire pops on overrun), then the pulses ring through a resonant exhaust pipe and muffler.
+const ENGINE_WORKLET = `
+class Engine extends AudioWorkletProcessor {
+  static get parameterDescriptors() {
+    return [{ name: 'rpm', defaultValue: 850, minValue: 300, maxValue: 9000 }, { name: 'throttle', defaultValue: 0, minValue: 0, maxValue: 1 }];
+  }
+  constructor() {
+    super();
+    this.ph = 0; this.len = 1; this.k = 0; this.tick = 1;
+    this.age = new Float32Array(8).fill(1); this.amp = new Float32Array(8); this.pop = new Float32Array(8);
+  }
+  process(_, outs, P) {
+    const out = outs[0][0], dt = 1 / sampleRate, TAU = 2 * Math.PI;
+    for (let i = 0; i < out.length; i++) {
+      const rpm = P.rpm.length > 1 ? P.rpm[i] : P.rpm[0], thr = P.throttle.length > 1 ? P.throttle[i] : P.throttle[0];
+      const before = this.ph;
+      this.ph += rpm / 120 * dt;
+      if (before < this.len / 2 && this.ph >= this.len / 2) this.tick = 0;
+      if (this.ph >= this.len) {
+        this.ph -= this.len;
+        const idle = Math.max(0, 1 - (rpm - 850) / 1500);
+        this.len = 1 + (Math.random() - 0.5) * 0.14 * idle;
+        const k = this.k = (this.k + 1) % 8;
+        this.age[k] = 0;
+        this.amp[k] = (0.4 + 0.6 * thr) * (1 + (Math.random() - 0.5) * 0.35 * (0.4 + idle));
+        this.pop[k] = thr < 0.15 && rpm > 2600 && Math.random() < 0.18 ? 0.8 + Math.random() * 0.6 : 0;
+      }
+      let s = 0;
+      for (let j = 0; j < 8; j++) {
+        const a = this.age[j];
+        if (a > 0.09) continue;
+        const thump = Math.exp(-a / 0.012) * Math.sin(TAU * 74 * a) + 0.55 * Math.exp(-a / 0.005) * Math.sin(TAU * 165 * a);
+        const crack = Math.exp(-a / 0.0022) * (Math.random() * 2 - 1) * 0.45;
+        s += this.amp[j] * (thump + crack) + this.pop[j] * Math.exp(-a / 0.007) * (Math.random() * 2 - 1);
+        this.age[j] = a + dt;
+      }
+      if (this.tick < 0.004) { s += 0.05 * Math.exp(-this.tick / 0.0005) * (Math.random() * 2 - 1); this.tick += dt; }
+      out[i] = s;
+    }
+    return true;
+  }
+}
+registerProcessor('engine', Engine);`;
+let engineReady = false;
+AC.audioWorklet?.addModule('data:application/javascript;base64,' + btoa(ENGINE_WORKLET)) // blob: URLs are refused from file://
+  .then(() => { engineReady = true; }, e => post('err:engine worklet ' + e));
+function bikeEngine() {
+  if (!engineReady) return null;
+  const src = new AudioWorkletNode(AC, 'engine'), pipe = AC.createGain(), delay = AC.createDelay(0.05), fb = AC.createGain(), fbLP = AC.createBiquadFilter(),
+    body = AC.createBiquadFilter(), clip = AC.createWaveShaper(), muffler = AC.createBiquadFilter(), hp = AC.createBiquadFilter(), g = AC.createGain(), p = AC.createStereoPanner();
+  // exhaust pipe: a ~1.1 m tube rings at its own length (delay with damped feedback)
+  delay.delayTime.value = 0.0064; fb.gain.value = 0.55; fbLP.type = 'lowpass'; fbLP.frequency.value = 1800;
+  body.type = 'peaking'; body.frequency.value = 130; body.Q.value = 1; body.gain.value = 6;
+  const curve = new Float32Array(1024); for (let i = 0; i < 1024; i++) curve[i] = Math.tanh((i / 511.5 - 1) * 2.2);
+  clip.curve = curve; muffler.type = 'lowpass'; muffler.Q.value = 0.8; hp.type = 'highpass'; hp.frequency.value = 35; g.gain.value = 0;
+  src.connect(pipe); pipe.connect(delay).connect(fb).connect(fbLP).connect(pipe);
+  pipe.connect(body).connect(clip).connect(muffler).connect(hp).connect(g).connect(p).connect(master);
+  const rpmP = src.parameters.get('rpm'), thrP = src.parameters.get('throttle');
+  const l = {
+    set(rpm, throttle, vol, pan) { // rpm 0..1 maps idle..near redline
+      ramp(rpmP, 850 + 4600 * rpm, 0.02); ramp(thrP, throttle, 0.04);
+      ramp(muffler.frequency, 550 + 1400 * rpm + 2200 * throttle, 0.04); ramp(g.gain, vol * 1.0, 0.05); ramp(p.pan, pan, 0.05);
+    },
+    stop() { ramp(g.gain, 0, 0.12); setTimeout(() => src.disconnect(), 1000); },
+  };
+  loops.push(l); return l;
+}
+const sfx = {
+  hm: () => { tone(430, 0, 0.13, { type: 'triangle', vol: 0.14, slideTo: 380 }); tone(470, 0.17, 0.22, { type: 'triangle', vol: 0.16, slideTo: 760 }); },
+  clack: () => { noise(0, 0.04, { vol: 0.16, from: 2500, to: 1500, q: 2 }); tone(240, 0, 0.05, { vol: 0.07 }); },
+  skid: (len = 0.5) => noise(0, len, { vol: 0.2, from: 2200, to: 700, q: 1.2 }),
+  crash: () => { noise(0, 1.4, { vol: 0.55, from: 3000, to: 250, q: 0.6, type: 'lowpass' }); tone(70, 0, 0.6, { vol: 0.3, slideTo: 40 }); },
+  splash: () => noise(0, 0.7, { vol: 0.32, from: 1800, to: 500, q: 0.8 }),
+  whoosh: () => { noise(0, 0.5, { vol: 0.35, from: 400, to: 2000, q: 1.2 }); tone(140, 0.05, 0.25, { vol: 0.2, slideTo: 90 }); },
+  kick: () => [0, 0.14, 0.27].forEach(t => noise(t, 0.08, { vol: 0.18, from: 700, to: 200, type: 'lowpass' })),
+  step: (soft = 1) => { noise(0, 0.07, { vol: 0.12 * soft, from: 260, to: 120, q: 2, type: 'lowpass' }); tone(90, 0, 0.06, { vol: 0.08 * soft }); },
+  grab: () => { noise(0, 0.06, { vol: 0.14, from: 1200, to: 500, q: 3 }); tone(150, 0, 0.05, { vol: 0.06 }); },
+  grunt: () => tone(210, 0, 0.16, { type: 'triangle', vol: 0.07, slideTo: 170 }),
+  scream: () => { tone(900, 0, 0.9, { type: 'triangle', vol: 0.09, slideTo: 380 }); noise(0, 0.9, { vol: 0.22, from: 300, to: 2400, q: 1.5 }); },
+  thud: () => { tone(110, 0, 0.28, { slideTo: 42, vol: 0.5 }); noise(0, 0.14, { vol: 0.2, from: 400, to: 100, type: 'lowpass' }); },
+  dizzy: () => [1568, 1976, 2349].forEach((f, i) => { tone(f, i * 0.12, 0.25, { vol: 0.05 }); tone(f * 1.5, 0.36 + i * 0.12, 0.25, { vol: 0.04 }); }),
+  boing: () => { tone(180, 0, 0.35, { type: 'triangle', slideTo: 620, vol: 0.25 }); tone(360, 0.02, 0.3, { slideTo: 900, vol: 0.08 }); },
+  hey: () => { tone(660, 0, 0.12, { type: 'triangle', vol: 0.18 }); tone(880, 0.1, 0.18, { type: 'triangle', vol: 0.18 }); },
+  pop: () => tone(520, 0, 0.12, { slideTo: 980, vol: 0.18 }),
+  tap: () => tone(1200, 0, 0.05, { vol: 0.12 }),
+  happy: () => { // bright major arpeggio + sparkle, then a little dance groove
+    [523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.09, 0.35, { type: 'triangle', vol: 0.2 }));
+    [2093, 2637, 3136].forEach((f, i) => tone(f, 0.42 + i * 0.06, 0.25, { vol: 0.06 }));
+    for (let b = 0; b < 8; b++) {
+      const t = 0.75 + b * 0.22;
+      tone(b % 2 ? 98 : 131, t, 0.18, { type: 'square', vol: 0.07 });
+      noise(t + 0.11, 0.05, { vol: 0.08, from: 6000, to: 8000, type: 'highpass' });
+      tone([659, 784, 880, 784, 659, 523, 587, 659][b], t, 0.2, { type: 'triangle', vol: 0.12 });
+    }
+  },
+  sad: () => { // sad trombone: wah wah wah waaah
+    [[311, 0], [294, 0.42], [277, 0.84]].forEach(([f, t]) => tone(f, t, 0.38, { type: 'sawtooth', vol: 0.09, attack: 0.05 }));
+    tone(262, 1.26, 1.1, { type: 'sawtooth', vol: 0.09, attack: 0.05, slideTo: 247 });
+  },
+};
+
+// ---------- animation state ----------
+const S = root.scale.x;
+let GROUND = -H / 2 + 100 * S; // feet height when standing: lower third of the screen (start() lifts it clear of the Dock)
+banner.scale.setScalar(S);
+ladder.scale.setScalar(S);
+const G = 2600 * S, OFF_TOP = H / 2 + 60, OFF_BOTTOM = -H / 2 - 360 * S;
+const NO_ANSWER_MS = 5 * 60 * 1000; // no click in 5 min counts as "remind me later"
+// side entrances: cruise speed, acceleration, braking (points/s, times S), how far off-screen it starts/ends, how often it's picked
+const RIDES = {
+  walk:  { v: 175, acc: 300, brake: 260, off: 260, w: 1 },
+  run:   { v: 470, acc: 900, brake: 620, off: 260, w: 1 },
+  skate: { v: 380, acc: 420, brake: 300, off: 300, w: 1.5 },
+  surf:  { v: 400, acc: 380, brake: 230, off: 560, w: 2 },
+  bike:  { v: 560, acc: 520, brake: 420, off: 380, w: 2 },
+};
+const RIDE_YAW = { walk: 0.6, run: 0.6, skate: 0.2, surf: 0.2, bike: 1.15 }; // facing while riding (times dir)
+const STOP_YAW = { walk: 0, run: 0, skate: 0.15, surf: 0.15, bike: 0.3 };   // facing while stopped at the centre
+let phase = 'hidden', phaseT = 0, from = 'left', exitTo = 'right', mood = 'ask', noAnswer = null;
+let ride = 'walk', dir = 1, cruise = 0, braking = 0, skidded = false;
+let x = 0, y = 0, vx = 0, vy = 0, airborne = false, walkPhase = 0, lastStep = 0, climbPhase = 0, lastGrab = 0;
+let squash = 1, squashV = 0, yaw = 0, targetYaw = 0, blinkT = 2, blinkAmt = 0, tumble = 0;
+let bannerShow = 1, bannerShowV = 0, bannerTarget = 1;
+let lean = 0, eyeX = 0, pitch = 0, roll = 0, push = 0, pushPh = 0, ollieT = -1, flip = false, crackT = 0;
+let waveAmp = 0, waveTarget = 0, engineOn = false, enginePh = 0, revT = 0, rpm = 0, engineSnd = null;
+let chute = false, chuteOpen = 0, chuteOpenV = 0, chuteGone = 0, chuteSway = 0, planeX = 0, planeDir = 1, dbgRiding = false;
+let rumble = null, sea = null, engineDrone = null;
+const ex = { smile: 0.4, open: 0, brow: 0, browUp: 0, eye: 1, squint: 0, blush: 0, lookY: 0, droop: 0, tilt: 0 };
+let et = { ...ex };
+const EXPR = {
+  calm:   { smile: 0.4, open: 0, brow: 0, browUp: 0.1, eye: 1, squint: 0, blush: 0, lookY: 0, droop: 0, tilt: 0 },
+  ask:    { smile: 0.55, open: 0, brow: 0, browUp: 0.55, eye: 1.05, squint: 0, blush: 0.2, lookY: 0, droop: 0, tilt: 0.12 },
+  hey:    { smile: 0.9, open: 0.45, brow: 0, browUp: 0.8, eye: 1.1, squint: 0.1, blush: 0.3, lookY: 0, droop: 0, tilt: -0.08 },
+  wow:    { smile: -0.1, open: 0.8, brow: 0.3, browUp: 1, eye: 1.3, squint: 0, blush: 0, lookY: 0.4, droop: 0, tilt: 0 },
+  effort: { smile: -0.2, open: 0.12, brow: -0.6, browUp: 0, eye: 0.85, squint: 0.2, blush: 0.4, lookY: 1, droop: 0, tilt: 0 },
+  dizzy:  { smile: -0.1, open: 0.3, brow: 0.4, browUp: 0.3, eye: 0.8, squint: 0, blush: 0, lookY: 0, droop: 0, tilt: 0 },
+  happy:  { smile: 1, open: 0.55, brow: 0, browUp: 0.7, eye: 1, squint: 0.75, blush: 1, lookY: 0, droop: 0, tilt: 0 },
+  sad:    { smile: -0.85, open: 0, brow: 1, browUp: 0.2, eye: 0.72, squint: 0, blush: 0, lookY: -1, droop: 1, tilt: 0.1 },
+};
+const setExpr = n => { et = { ...EXPR[n] }; };
+const go = p => { phase = p; phaseT = 0; };
+const at = (s, dt) => phaseT >= s && phaseT - dt < s; // true on the one frame the phase clock passes s seconds
+const offX = () => W / 2 + RIDES[ride].off * S;
+const choices = document.getElementById('choices');
+function pickRide() {
+  const ks = Object.keys(RIDES);
+  let r = Math.random() * ks.reduce((s, k) => s + RIDES[k].w, 0);
+  return ks.find(k => (r -= RIDES[k].w) < 0) || 'walk';
+}
+function showRide() {
+  skate.visible = ride === 'skate'; surf.visible = ride === 'surf'; bike.visible = ride === 'bike';
+  fin.position.x = -dir * 62;
+}
+
+// start(spec, inset): spec = edge or edge:variant (left|right|top|bottom, e.g. 'left:surf', 'top:nochute');
+// inset = Dock height in points, so he stands above it.
+window.start = (spec, inset = 0) => {
+  AC.resume();
+  const [edge, variant] = spec.split(':');
+  GROUND = -H / 2 + inset + 100 * S;
+  from = edge; exitTo = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }[edge];
+  mood = 'ask'; choices.classList.remove('show'); post('rect:none'); clearTimeout(noAnswer);
+  stopLoops(); rumble = sea = engineDrone = engineSnd = null; engineOn = false; rpm = 0; parts.forEach(p => { p.life = 0; });
+  setBoard('Hey! 👋', '#ff9f0a');
+  camera.position.set(0, 0, camDist);
+  vx = vy = 0; squash = 1; squashV = 0; airborne = false; tumble = 0; ladder.visible = false;
+  lean = eyeX = pitch = roll = push = waveAmp = waveTarget = revT = 0; updateWave(0, 1); ollieT = -1; skidded = false; dbgRiding = false;
+  chute = false; chuteOpen = chuteOpenV = chuteGone = chuteSway = 0; chuteG.visible = false; chuteM.opacity = chuteLineM.opacity = 1;
+  plane.visible = false; root.visible = true; ride = 'walk'; dir = 1; showRide();
+  bannerTarget = 1; bannerShow = 1;
+  if (edge === 'left' || edge === 'right') {
+    // peek in from the edge first, then come in on a ride
+    dir = edge === 'left' ? 1 : -1;
+    ride = RIDES[variant] ? variant : pickRide();
+    x = -dir * (W / 2 + 70 * S); y = GROUND; targetYaw = dir * 0.3; bannerTarget = bannerShow = 0; setExpr('calm'); go('peek');
+  } else if (edge === 'top') {
+    // a plane flies over and he jumps out: parachute most of the time, faceplant otherwise
+    planeDir = variant === 'right' ? -1 : variant === 'left' ? 1 : Math.random() < 0.5 ? 1 : -1;
+    chute = variant !== 'nochute' && (variant === 'chute' || Math.random() < 0.75);
+    planeX = -planeDir * (W / 2 + 340 * S); plane.visible = true; plane.scale.set(planeDir * S, S, S);
+    targetYaw = 0; root.visible = false; bannerTarget = bannerShow = 0; engineDrone = drone(); go('plane');
+  } else {
+    x = 0; y = OFF_BOTTOM; targetYaw = Math.PI; bannerTarget = 0; bannerShow = 0; setExpr('effort'); climbPhase = 0; ladderY = GROUND + 28 * S; ladder.visible = true; go('enter-climb');
+  }
+  yaw = targetYaw;
+  clock.getDelta();
+  renderer.setAnimationLoop(frame);
+};
+function beginRide() { // just off-screen, out of sight: swap the peeking pose for the ride
+  x = -dir * offX(); vx = 0; lean = 0; showRide();
+  bannerTarget = bannerShow = ride === 'surf' || ride === 'bike' ? 0 : 1;
+  yaw = targetYaw = dir * RIDE_YAW[ride];
+  setExpr(ride === 'walk' ? 'calm' : 'hey');
+  if (ride === 'surf') waveAmp = waveTarget = 1;
+  if (ride === 'skate') rumble = loopNoise('lowpass', 300, 0.8);
+  go('enter-ride');
+}
+function arrive() {
+  targetYaw = dir * (STOP_YAW[ride] ?? 0); if (from === 'top' || from === 'bottom') targetYaw = 0;
+  setExpr('hey'); sfx.hey(); bannerTarget = 1; go('greet');
+  if (ride === 'skate') { ollieT = 0; flip = false; }
+  if (ride === 'bike') squashV -= 1.5;
+}
+window.answer = happy => {
+  if (phase !== 'ask') return;
+  clearTimeout(noAnswer);
+  sfx.tap(); choices.classList.remove('show'); post('rect:none');
+  mood = happy ? 'happy' : 'sad';
+  setBoard(happy ? 'Great job! 🎉' : 'Please drink\nsoon 🥺', happy ? '#30d158' : '#8e8e93');
+  setExpr(mood);
+  (happy ? sfx.happy : sfx.sad)();
+  go(happy ? 'dance' : 'mope');
+};
+function leave() {
+  if (exitTo === 'left' || exitTo === 'right') {
+    // leave on the same ride, carrying on in the direction he came from
+    const happy = mood === 'happy';
+    targetYaw = dir * (ride === 'walk' || ride === 'run' ? (happy ? 0.75 : 0.5) : RIDE_YAW[ride]);
+    if (ride === 'surf') { waveTarget = happy ? 1 : 0.6; bannerTarget = 0; sfx.splash(); splashBurst(40); }
+    if (ride === 'bike') { bannerTarget = 0; sfx.kick(); }
+    if (ride === 'skate' && happy) { ollieT = 0; flip = true; }
+    skidded = false; go('exit-ride');
+  } else if (exitTo === 'top') { go('exit-crouch'); }
+  else { vy = 260 * S; airborne = true; setExpr('wow'); sfx.scream(); go('exit-air'); }
+}
+function finish() {
+  phase = 'hidden'; renderer.setAnimationLoop(null); renderer.clear();
+  stopLoops(); engineOn = false;
+  post(mood === 'happy' ? 'yes' : 'later');
+}
+function showChoices() {
+  choices.style.top = (H / 2 - GROUND + 26) + 'px';
+  choices.classList.add('show'); sfx.pop();
+  setTimeout(() => { const r = choices.getBoundingClientRect(); post('rect:' + [r.left, r.top, r.width, r.height].map(Math.round).join(',')); }, 500);
+  noAnswer = setTimeout(() => answer(false), NO_ANSWER_MS);
+}
+document.getElementById('yes').onclick = () => answer(true);
+document.getElementById('later').onclick = () => answer(false);
+function splashBurst(n) { // the wave breaking: streaking drops thrown up and out, plus billowing whitewater
+  const cx = x - dir * 40 * S;
+  for (let i = 0; i < n; i++) {
+    const a = 0.25 + Math.random() * (Math.PI - 0.5), sp = (180 + Math.random() * 420) * S;
+    emit(cx + (Math.random() - 0.5) * 220 * S, y + (20 + Math.random() * 120) * S, -80 * S + Math.random() * 120 * S,
+      Math.cos(a) * sp, Math.sin(a) * sp * 1.3, (Math.random() - 0.5) * 160 * S,
+      (1.6 + Math.random() * 3) * S, 0.8 + Math.random() * 0.7, Math.random() < 0.5 ? 0xd8f6ff : 0x7fd4ff, { g: 0.55 });
+  }
+  for (let i = 0; i < n / 3; i++) {
+    const a = Math.random() * Math.PI * 2, r = Math.random() * 120 * S;
+    emit(cx + Math.cos(a) * r, y + (30 + Math.random() * 140) * S, -60 * S + Math.sin(a) * 50 * S,
+      Math.cos(a) * 140 * S, (60 + Math.random() * 160) * S, (Math.random() - 0.5) * 80 * S,
+      (9 + Math.random() * 14) * S, 0.9 + Math.random() * 0.8, 0xffffff, { g: 0.12, drag: 2.5, grow: true });
+  }
+}
+
+// debug: stand still at centre with an expression (used by --snapshot to check the look up close);
+// r picks a ride, riding = true shows the riding pose instead of the stopped one
+window.pose = (name, zoom = 1, r = 'walk', riding = false) => {
+  phase = 'debug'; x = 0; y = GROUND; vx = vy = 0; airborne = false; bannerShow = 1; root.visible = true; plane.visible = false; chuteG.visible = false;
+  ride = r; dir = 1; dbgRiding = riding; showRide();
+  waveAmp = waveTarget = r === 'surf' && riding ? 1 : 0;
+  yaw = targetYaw = riding ? RIDE_YAW[r] : STOP_YAW[r];
+  bannerTarget = bannerShow = riding && (r === 'surf' || r === 'bike') ? 0 : 1;
+  setExpr(name); Object.assign(ex, et); mood = name === 'happy' || name === 'sad' ? name : 'ask';
+  camera.position.set(0, GROUND + 270 * S - (zoom > 1 ? 40 : 0), camDist / zoom);
+  renderer.setAnimationLoop(frame);
+};
+
+// ---------- per-frame ----------
+const clock = new THREE.Clock();
+const damp = (k, dt) => 1 - Math.exp(-k * dt);
+const vtmp = new THREE.Vector3();
+let swayV = 0, sway = 0;
+const ease = (cur, target, k, dt) => cur + (target - cur) * damp(k, dt);
+// how far a leg reaches down from the hip (to the sole), so feet can be planted on a board
+const legReach = L => Math.cos(L.hip.rotation.z) * (44 * Math.cos(L.hip.rotation.x) + 47.5 * Math.cos(L.hip.rotation.x + L.knee.rotation.x));
+
+function frame() {
+  const dt = Math.min(clock.getDelta(), 1 / 30), t = clock.elapsedTime;
+  phaseT += dt;
+  const ground = GROUND, walkSpeed = 175 * S, runSpeed = 420 * S, slowSpeed = 105 * S;
+  const isRide = r => ride === r && phase !== 'peek';
+  let gait = 0; // 0 idle .. 1 walk .. 2 run
+
+  // --- peek: only his head pokes in from the edge, he looks around, ducks back out, then the ride comes in
+  if (phase === 'peek') {
+    const out = phaseT > 0.25 && phaseT < 2.05;
+    lean = ease(lean, out ? 0.55 : 0, out ? 5 : 8, dt);
+    if (at(0.7, dt)) { setExpr('ask'); sfx.hm(); }
+    eyeX = ease(eyeX, phaseT < 0.8 ? 0 : phaseT < 1.25 ? dir : phaseT < 1.7 ? -dir * 0.3 : dir, 14, dt);
+    if (at(1.75, dt)) setExpr('hey');
+    if (at(2.2, dt)) { // you hear it coming before you see it
+      if (ride === 'bike') { engineOn = true; sfx.kick(); }
+      if (ride === 'surf') { sea = loopNoise('bandpass', 700, 0.7); sfx.splash(); }
+    }
+    if (ride === 'bike' && (at(2.35, dt) || at(2.6, dt))) revT = 1; // vroom vroom
+    if (phaseT > 2.75) beginRide();
+  }
+
+  // --- locomotion per phase
+  if (phase === 'enter-ride') {
+    // cruise in, then brake so he comes to rest exactly at the centre (constant deceleration, no overshoot)
+    const R = RIDES[ride], dist = Math.abs(x), stopV = Math.sqrt(2 * R.brake * S * dist);
+    cruise = R.v * S;
+    braking = stopV < cruise ? 1 - stopV / cruise : 0;
+    vx = dir * Math.min(Math.abs(vx) + R.acc * S * dt, cruise, stopV);
+    x += vx * dt;
+    if (braking > 0.05 && !skidded && (ride === 'run' || ride === 'skate' || ride === 'bike')) { skidded = true; sfx.skid(ride === 'bike' ? 0.8 : 0.5); }
+    if (ride === 'surf' && waveTarget > 0 && dist < 170 * S) { waveTarget = 0; sfx.crash(); splashBurst(130); } // the wave breaks as he glides in
+    if (dist < 1.5 && Math.abs(vx) < 25 * S) { x = 0; vx = 0; braking = 0; arrive(); }
+  } else if (phase === 'exit-ride') {
+    const R = RIDES[ride], happy = mood === 'happy';
+    cruise = ride === 'walk' ? (happy ? runSpeed : slowSpeed) : R.v * S * (happy ? 1.25 : 0.55);
+    const delay = ride === 'surf' ? 0.55 : ride === 'bike' ? 1.0 : ride === 'skate' && happy ? 0.3 : 0; // wave builds / engine kicks first
+    if (ride === 'bike' && at(0.35, dt)) engineOn = true;
+    if (ride === 'bike' && (at(0.5, dt) || at(0.8, dt))) revT = 1;
+    if (phaseT > delay) vx = dir * Math.min(Math.abs(vx) + (happy ? 1.5 : 0.6) * R.acc * S * dt, cruise);
+    x += vx * dt;
+    if (Math.abs(x) > offX()) return finish();
+  } else if (phase === 'plane') {
+    // he's on board, invisible; jumps once the door has flown past the middle
+    const doorX = planeX - planeDir * 74 * S;
+    if (planeDir * doorX > (chute ? -90 : -40) * S) {
+      root.visible = true; x = doorX; y = H / 2 - 130 * S; vx = planeDir * 170 * S; vy = 150 * S; airborne = true;
+      yaw = targetYaw = 0; setExpr('wow'); sfx.scream(); go('enter-fall');
+    }
+  } else if (phase === 'enter-climb') {
+    // hand-over-hand climb: each pull lifts him in a surge, then he hangs a moment before the next reach
+    climbPhase += dt * Math.PI * 2 / 0.62;
+    const pull = Math.pow(Math.max(0, Math.sin(climbPhase)), 2);
+    y += pull * 950 * S * dt;
+    const grabIdx = Math.floor((climbPhase + Math.PI / 2) / Math.PI);
+    if (grabIdx !== lastGrab) { lastGrab = grabIdx; sfx.grab(); if (grabIdx % 2) sfx.grunt(); }
+    if (y >= ground - 18 * S) { vy = 300 * S; airborne = true; targetYaw = 0; sfx.grunt(); setExpr('hey'); go('enter-hop'); }
+  } else if (phase === 'exit-crouch') {
+    squashV += (-(squash - 0.78) * 300 - squashV * 18) * dt; // anticipation
+    if (phaseT > 0.22) { vy = Math.sqrt(2 * G * (OFF_TOP - y + 500 * S)); airborne = true; sfx.boing(); setExpr('hey'); go('exit-air'); }
+  }
+  if (phase === 'enter-fall' && chute && phaseT > 0.45) {
+    go('chute'); chuteG.visible = true; chuteOpen = 0.05; chuteOpenV = 0; sfx.whoosh(); setExpr('happy'); squashV += 3;
+  }
+  if (airborne) {
+    if (phase === 'chute') vy = ease(vy, -150 * S, 3.2, dt); else vy -= G * dt;
+    y += vy * dt;
+    if (phase === 'enter-fall' || phase === 'chute') { // drift towards the middle of the screen on the way down
+      const k = chute ? 3 : 10;
+      vx += (-x * k - vx * 2 * Math.sqrt(k)) * dt; x += vx * dt;
+    }
+    if ((phase === 'enter-fall' || phase === 'enter-hop' || phase === 'chute') && vy < 0 && y <= ground) {
+      const hard = phase === 'enter-fall';
+      y = ground; airborne = false; squashV -= Math.min(hard ? 9 : 4, Math.abs(vy) * 0.005 / S); vy = 0; vx = 0; sfx.thud();
+      if (hard) { setExpr('dizzy'); sfx.dizzy(); go('dizzy'); } else go('land');
+    }
+    if (phase === 'exit-air' && (y > OFF_TOP + 40 || y < OFF_BOTTOM - 120 * S)) return finish();
+  }
+  if (phase === 'land' || phase === 'dizzy') x = ease(x, 0, 6, dt);
+  if (phase === 'land' && phaseT > 0.4) arrive();
+  if (ladder.visible && phase !== 'enter-climb' && phase !== 'enter-hop') {
+    if (ladderY > GROUND) sfx.grab();
+    ladderY -= 1100 * S * dt;
+    if (ladderY < -H / 2 - 40) ladder.visible = false;
+  }
+  ladder.position.set(0, ladderY, -38 * S);
+  if (phase === 'dizzy' && phaseT > 1.3) arrive();
+  if (phase === 'greet' && phaseT > 1.3) {
+    setExpr('ask'); setBoard('Did you drink\nwater? 💧', '#0a84ff'); go('ask'); showChoices();
+    if (ride === 'bike') engineOn = false;
+  }
+  if (phase === 'dance' && phaseT > 2.6) leave();
+  if (phase === 'mope' && phaseT > 2.4) leave();
+
+  // --- the plane keeps flying across after he's jumped
+  if (plane.visible) {
+    planeX += planeDir * 520 * S * dt;
+    plane.position.set(planeX, H / 2 - 120 * S + Math.sin(t * 1.7) * 6 * S, 0);
+    plane.rotation.set(-0.22, -0.3 * planeDir, Math.sin(t * 1.3) * 0.04);
+    prop.rotation.x += 70 * dt;
+    const near = 1 / (1 + (planeX / (W * 0.4)) ** 2), dop = 1 + 0.09 * Math.tanh(-planeX * planeDir / (260 * S));
+    ramp(engineDrone.g.gain, 0.3 * near); ramp(engineDrone.p.pan, panOf(planeX));
+    ramp(engineDrone.o1.frequency, 86 * dop); ramp(engineDrone.o2.frequency, 87.3 * dop);
+    if (Math.abs(planeX) > W / 2 + 360 * S) { plane.visible = false; engineDrone.stop(); }
+  }
+
+  // --- gait from actual speed, so feet never slide (walking / running only)
+  const speed = Math.abs(vx);
+  if (!airborne && speed > 1 && (ride === 'walk' || ride === 'run')) {
+    gait = speed / walkSpeed;
+    walkPhase += speed * dt / ((gait > 1.4 ? 150 : 115) * S) * Math.PI * 2;
+    const stepIdx = Math.floor(walkPhase / Math.PI);
+    if (stepIdx !== lastStep) { lastStep = stepIdx; sfx.step(mood === 'sad' ? 0.6 : gait > 1.4 ? 1.3 : 1); }
+  }
+  const amp = Math.min(gait, 1.6), run = Math.max(0, Math.min(1, (gait - 1) / 0.8));
+  const riding = phase === 'enter-ride' || phase === 'exit-ride' || dbgRiding;
+  const skidding = phase === 'enter-ride' ? braking : 0;
+
+  // --- rides: wheels, engine, wave, spray, smoke, dust
+  if (isRide('skate')) {
+    // kick-push while speeding up, roll otherwise; ollie on arrival, kickflip when leaving happy
+    const pushing = riding && !dbgRiding && skidding === 0 && speed < cruise * 0.92 && (phase === 'enter-ride' || phaseT > 0.3);
+    if (pushing || push > 0.05) {
+      const before = Math.sin(pushPh);
+      pushPh += dt * Math.PI * 2 / (mood === 'sad' && phase === 'exit-ride' ? 1.1 : 0.75);
+      if (before <= 0 && Math.sin(pushPh) > 0 && pushing) sfx.clack();
+    }
+    push = pushing ? Math.pow(Math.max(0, Math.sin(pushPh)), 1.5) : ease(push, 0, 10, dt);
+    roll = ease(roll, skidding > 0.1 ? dir * 0.16 : 0, 8, dt);
+    if (rumble) { ramp(rumble.g.gain, 0.16 * Math.min(1, speed / (250 * S)) + 0.1 * skidding); ramp(rumble.f.frequency, 180 + speed / S * 0.9); ramp(rumble.p.pan, panOf(x)); }
+    crackT += speed * dt;
+    if (crackT > 95 * S) { crackT = 0; tone(1400, 0, 0.03, { vol: 0.03 }); }
+    if (skidding > 0.1 && Math.random() < 0.5) emit(x - dir * 55 * S, y + 2 * S, 10 * S, -dir * Math.random() * 60 * S, Math.random() * 60 * S, 0, 5 * S, 0.5, 0xd9c7ab, { g: 0.05, drag: 3, grow: true });
+  }
+  if (ollieT >= 0) {
+    if (ollieT === 0) sfx.clack();
+    ollieT += dt;
+    if (ollieT > 0.55) { ollieT = -1; sfx.clack(); squashV -= 2; }
+  }
+  const ollie = ollieT >= 0 ? Math.sin(Math.PI * ollieT / 0.55) : 0;
+  skateDeck.rotation.x = ollieT >= 0 && flip ? Math.PI * 2 * THREE.MathUtils.smoothstep(ollieT / 0.55, 0.1, 0.8) : 0;
+  skateDeck.position.y = 11 + (flip ? ollie * 18 : 0);
+
+  if (ride === 'surf') {
+    waveAmp = ease(waveAmp, waveTarget, waveTarget > waveAmp ? 2.6 : 2.2, dt);
+    wave.visible = waveAmp > 0.01 && phase !== 'peek';
+    wave.scale.set(dir, Math.max(0.001, waveAmp), 1);
+    if (wave.visible) updateWave(t, waveAmp);
+    wave.position.y = Math.sin(t * 3) * 3 * waveAmp;
+    surf.position.y = 6 + (riding ? Math.sin(t * 3 + 0.6) * 2.5 : 0);
+    roll = ease(roll, riding ? Math.sin(t * 2.4) * 0.05 : 0, 6, dt);
+    if (sea) { ramp(sea.g.gain, 0.2 * waveAmp); ramp(sea.f.frequency, 600 + Math.sin(t * 1.3) * 250); ramp(sea.p.pan, panOf(x)); }
+    if (wave.visible && waveAmp > 0.3 && !dbgRiding) {
+      // spray off the tail of the board and foam blowing off the lip
+      if (speed > 60 * S) for (let i = 0; i < 4; i++) emit(x - dir * 75 * S, y + 8 * S, (Math.random() - 0.4) * 40 * S,
+        -dir * (80 + Math.random() * 220) * S, (160 + Math.random() * 280) * S, (Math.random() - 0.5) * 80 * S, (1.4 + Math.random() * 2.2) * S, 0.7, Math.random() < 0.5 ? 0xd8f6ff : 0x7fd4ff, { g: 0.6 });
+      if (Math.random() < 0.6) emit(x + dir * (-15 - Math.random() * 70) * S, y + (140 + Math.random() * 40) * S * waveAmp, (-60 - Math.random() * 150) * S,
+        dir * (40 + Math.random() * 100) * S, Math.random() * 80 * S, 0, (5 + Math.random() * 6) * S, 0.7, 0xffffff, { g: 0.2, drag: 2, grow: true });
+    }
+  } else wave.visible = false;
+
+  if (isRide('bike')) {
+    for (const w of bikeWheels) w.rotation.x += speed / (31 * S) * dt;
+    // wheelie when leaving happy, nose dips while braking
+    const wheelie = phase === 'exit-ride' && mood === 'happy' && phaseT > 1.0 && phaseT < 2.3 ? -0.3 : 0;
+    pitch = ease(pitch, wheelie || 0.07 * skidding, wheelie ? 4 : 6, dt);
+    enginePh += (4 + 14 * rpm) * dt * (engineOn ? 1 : 0);
+    if (enginePh >= 1 && root.visible) { // exhaust puffs at the firing rate
+      enginePh -= 1;
+      exhaustTip.getWorldPosition(vtmp);
+      emit(vtmp.x, vtmp.y, vtmp.z, -dir * (30 + Math.random() * 40) * S, (10 + Math.random() * 30) * S, 0, (5 + rpm * 5) * S, 0.9, 0xc8c8cc, { g: -0.04, drag: 2, grow: true });
+    }
+    if (skidding > 0.15 && Math.random() < 0.6) emit(x - dir * 55 * S, y + 3 * S, 0, -dir * Math.random() * 50 * S, Math.random() * 60 * S, 0, 6 * S, 0.6, 0xd9c7ab, { g: 0.05, drag: 3, grow: true });
+  } else pitch = ease(pitch, 0, 6, dt);
+  if (ride === 'bike') {
+    // engine: idles at a low "dug-dug", revs blip up to "vroom", and while accelerating the revs climb and drop with each gear
+    if (engineOn && !engineSnd) engineSnd = bikeEngine();
+    revT = Math.max(0, revT - dt * 1.5);
+    const sf = Math.min(1, Math.abs(vx) / (RIDES.bike.v * S));
+    const accel = riding && skidding === 0 && Math.abs(vx) > 5 * S && Math.abs(vx) < cruise * 0.97;
+    const target = !engineOn ? 0 : Math.min(1, (accel ? 0.3 + 0.7 * ((sf * 2.6) % 1) : 0.1 + 0.45 * sf) + revT * 0.85);
+    rpm = ease(rpm, target, target > rpm ? 7 : 4, dt);
+    const throttle = !engineOn ? 0 : target > rpm + 0.03 ? 1 : riding && skidding === 0 ? 0.35 : 0.05; // off the gas while braking / idling
+    if (engineSnd) engineSnd.set(rpm, throttle, engineOn ? (phase === 'peek' ? 0.7 : 1) : 0, panOf(x));
+  }
+  if (ride === 'run' && skidding > 0.1 && Math.random() < 0.7) emit(x + dir * 10 * S, y + 3 * S, 10 * S, dir * Math.random() * 120 * S, Math.random() * 70 * S, 0, 7 * S, 0.6, 0xd9c7ab, { g: 0.05, drag: 3, grow: true });
+  if (!isRide('skate') && ride !== 'surf') roll = ease(roll, 0, 8, dt);
+
+  // --- parachute: canopy springs open, he swings under it; after landing it collapses behind him and fades
+  if (chuteG.visible) {
+    chuteOpenV += (-(chuteOpen - 1) * 140 - chuteOpenV * 8) * dt;
+    chuteOpen += chuteOpenV * dt;
+    if (phase === 'chute') chuteSway = Math.sin(phaseT * 2.3) * 0.13 * Math.min(1, phaseT) - vx * 0.0005 / S;
+    else { chuteGone = Math.min(1, chuteGone + dt / 1.1); chuteSway = ease(chuteSway, 0, 5, dt); }
+    const side = planeDir;
+    chuteG.scale.set(chuteOpen, chuteOpen * (1 - 0.75 * chuteGone), chuteOpen);
+    chuteG.rotation.z = -side * chuteGone * 1.25;
+    chuteM.opacity = chuteLineM.opacity = 1 - chuteGone * chuteGone;
+    if (chuteGone >= 1) chuteG.visible = false;
+  } else chuteSway = ease(chuteSway, 0, 5, dt);
+
+  // --- squash & stretch spring (stretch along vertical speed while airborne)
+  const sqTarget = airborne && phase !== 'chute' ? 1 + THREE.MathUtils.clamp(Math.abs(vy) * 0.00022 / S, 0, 0.16) : 1;
+  if (phase !== 'exit-crouch') squashV += (-(squash - sqTarget) * 260 - squashV * 13) * dt;
+  squash += squashV * dt;
+  bannerShowV += (-(bannerShow - bannerTarget) * 220 - bannerShowV * 14) * dt;
+  bannerShow += bannerShowV * dt;
+
+  // --- dance: hop on the beat, sway hips, arms pump (bounce in the saddle on the bike)
+  let hop = 0, danceSway = 0, seatBounce = 0;
+  const beat = phaseT / 0.44;
+  if (phase === 'dance') {
+    if (isRide('bike')) seatBounce = Math.max(0, Math.sin(beat * Math.PI)) * 7;
+    else hop = Math.max(0, Math.sin(beat * Math.PI)) * 34 * S;
+    danceSway = Math.sin(beat * Math.PI);
+    yaw = targetYaw + Math.sin(beat * Math.PI * 0.5) * 0.35;
+  }
+  hop += ollie * 46 * S;
+
+  // --- expressions (smoothed), blinking
+  for (const k in ex) ex[k] = ease(ex[k], et[k], 9, dt);
+  blinkT -= dt;
+  if (blinkT < 0) { blinkT = 2.2 + Math.random() * 3; blinkAmt = 1; }
+  blinkAmt = Math.max(0, blinkAmt - dt * 7);
+  const blink = Math.sin(blinkAmt * Math.PI);
+  if (phase !== 'peek') eyeX = ease(eyeX, 0, 6, dt);
+
+  // ===== pose =====
+  if (phase !== 'dance') yaw = ease(yaw, targetYaw, 6, dt);
+  // tumbling while falling from the top, settling upright on landing
+  tumble = phase === 'enter-fall' ? Math.sin(t * 5.5) * 0.35 : ease(tumble, 0, 10, dt);
+  // the parachute swings him about the canopy, so shift his feet to keep the canopy steady
+  root.position.set(x + Math.sin(chuteSway) * 330 * S, y + hop, 0);
+  root.rotation.z = chuteSway;
+  yawG.rotation.set(0, yaw, tumble - dir * lean);
+  // ride tilt about the wheel / board end that stays on the ground
+  if (isRide('bike')) {
+    const zr = pitch < 0 ? -60 : 72; // wheelie pivots on the rear wheel, braking dips over the front
+    tiltG.rotation.set(pitch, 0, 0); tiltG.position.set(0, zr * Math.sin(pitch), zr - zr * Math.cos(pitch));
+  } else {
+    const xr = -Math.sign(roll || 1) * 55 * (isRide('skate') ? 1 : 0);
+    tiltG.rotation.set(0, 0, roll); tiltG.position.set(xr - xr * Math.cos(roll), -xr * Math.sin(roll), 0);
+  }
+  body.scale.set(1 / Math.sqrt(squash), squash, 1 / Math.sqrt(squash));
+  const breathe = 1 + Math.sin(t * 2.2) * 0.012;
+  torso.scale.set(breathe, breathe, breathe);
+
+  const climbing = phase === 'enter-climb';
+  const falling = phase === 'enter-fall' || (phase === 'exit-air' && exitTo === 'bottom');
+  const reachA = Math.sin(climbPhase), reachB = -reachA; // which hand is reaching up
+  const onBoard = isRide('skate') || isRide('surf'), onBike = isRide('bike');
+
+  // legs
+  const legSwing = 0.5 + 0.25 * run;
+  for (const [L, ph, side] of [[legL, walkPhase, 1], [legR, walkPhase + Math.PI, -1]]) {
+    let thigh = -Math.sin(ph) * legSwing * amp, knee = Math.max(0, Math.sin(ph - 1.1)) * (0.9 + 0.5 * run) * amp + 0.04, spread = 0;
+    if (airborne && falling) { thigh = -0.25 + Math.sin(t * 11 + side) * 0.45; knee = 0.5 + Math.sin(t * 11 + side + 1) * 0.35; }
+    else if (phase === 'chute') { thigh = -0.15 + Math.sin(t * 2.4 + side) * 0.18; knee = 0.3 + Math.sin(t * 2.4 + side + 1) * 0.15; }
+    else if (airborne) { thigh = -0.8; knee = 1.2; }
+    if (climbing) { const r = side > 0 ? reachB : reachA; thigh = -0.25 - Math.max(0, r) * 0.95; knee = 0.35 + Math.max(0, r) * 1.3; }
+    if (phase === 'exit-crouch') { thigh = -0.6; knee = 1.1; }
+    if (phase === 'dizzy') { thigh = -0.1; knee = 0.25 + Math.sin(t * 6 + side) * 0.1; }
+    if (ride === 'run' && skidding > 0.1) { thigh = side === dir ? -0.55 : 0.2; knee = side === dir ? 0.2 : 0.6; } // front foot planted, skidding
+    if (onBoard) {
+      // side-on stance, knees soft (surfing crouches lower); the back foot swings out to push the skateboard
+      const crouch = isRide('surf') && riding ? 0.55 : 0.2;
+      thigh = -crouch * 0.8; knee = crouch * 1.5; spread = side * (isRide('surf') ? 0.2 : 0.13);
+      if (side === -dir && push > 0) { spread += side * 0.45 * push; thigh = -0.05; knee = 0.1 + 0.25 * push; }
+      if (ollie > 0) { thigh -= ollie * 0.6; knee += ollie * 1.1; }
+    }
+    if (phase === 'dance') { thigh = -Math.max(0, Math.sin(beat * Math.PI + (side > 0 ? 0 : Math.PI))) * 0.4; knee = -thigh * 1.4; }
+    if (onBike) { thigh = -1.35; knee = 1.45; spread = side * 0.14; } // seated, feet on the pegs
+    L.hip.rotation.x = ease(L.hip.rotation.x, thigh, 18, dt);
+    L.knee.rotation.x = ease(L.knee.rotation.x, knee, 18, dt);
+    L.hip.rotation.z = ease(L.hip.rotation.z, spread, 18, dt);
+  }
+  // body height: walking bob, planted on the board, or sat in the saddle
+  if (onBoard) body.position.y = (isRide('surf') ? 9.6 : 13) - (91.5 - Math.max(legReach(legL), legReach(legR)));
+  else if (onBike) body.position.y = -1 + seatBounce;
+  else body.position.y = !airborne ? Math.abs(Math.cos(walkPhase)) * 5 * amp : 0;
+  hips.rotation.y = Math.sin(walkPhase) * 0.08 * amp;
+  hips.rotation.z = danceSway * 0.12 + (phase === 'dizzy' ? Math.sin(t * 6) * 0.06 : 0);
+  torso.rotation.z = -danceSway * 0.1 + (climbing ? reachA * 0.06 : 0);
+  torso.rotation.x = 0.05 * amp + 0.12 * run + ex.droop * 0.18 - (climbing ? 0.08 : 0)
+    - (ride === 'run' ? skidding * 0.35 : 0) + (onBike && riding ? 0.22 : 0) + (onBoard && riding ? 0.1 : 0);
+
+  // arms: rotation.z swings the arm out sideways (+ for the left arm, - for the right), x swings it forward
+  const sideArm = (A, side, sz, sx, ez, ex2, k = 14) => {
+    A.sh.rotation.z = ease(A.sh.rotation.z, side * sz, k, dt);
+    A.sh.rotation.x = ease(A.sh.rotation.x, sx, k, dt);
+    A.el.rotation.z = ease(A.el.rotation.z, side * ez, k, dt);
+    A.el.rotation.x = ease(A.el.rotation.x, ex2, k, dt);
+  };
+  const toBars = (A, side) => sideArm(A, side, 0.32, -1.05, 0, -0.6, 12);
+  if (climbing) {
+    // hand over hand: the reaching arm goes straight up, the pulling arm bends down to the shoulder
+    for (const [A, side, r] of [[armL, 1, reachB], [armR, -1, reachA]]) {
+      const reach = 0.5 + 0.5 * Math.tanh(3 * r);
+      sideArm(A, side, 0.28, -(2.05 + reach * 0.95), 0, -(1 - reach) * 1.2, 20);
+    }
+  } else if (falling && airborne) {
+    for (const [A, side, o] of [[armL, 1, 0], [armR, -1, 1.7]]) sideArm(A, side, 2.3 + Math.sin(t * 13 + o) * 0.45, 0, Math.sin(t * 13 + o + 1) * 0.5, 0, 16);
+  } else if (phase === 'chute' || (phase === 'land' && chuteGone < 0.3)) {
+    for (const [A, side] of [[armL, 1], [armR, -1]]) sideArm(A, side, 2.55, 0, 0.3, 0, 12); // holding the lines
+  } else if (onBike && riding) {
+    toBars(armL, 1); toBars(armR, -1);
+  } else if (isRide('surf') && riding) {
+    for (const [A, side, o] of [[armL, 1, 0], [armR, -1, 1]]) sideArm(A, side, 1.2 + Math.sin(t * 2.4 + o) * 0.15, 0.15, 0.3, -0.25, 10); // arms out for balance
+  } else {
+    // right arm holds the pole out to the side; lifts it high when dancing
+    const lift = phase === 'dance' ? 0.35 + Math.max(0, Math.sin(beat * Math.PI)) * 0.25 : 0;
+    sideArm(armR, -1, 0.5 + lift * 0.6 - ex.droop * 0.25 + (onBike ? 0.75 : 0), -0.15 - lift, 0, -1.35 + lift * 0.4 + ex.droop * 0.35, 16);
+    // left arm: swing while walking, wave when greeting, pump when dancing, balance on the skateboard, rest on the bars on the bike
+    let lsz = 0.14 - ex.droop * 0.06, lsx = Math.sin(walkPhase) * (0.45 + 0.4 * run) * amp, lez = 0, lex = -0.15 - 0.9 * run * amp;
+    if (ride === 'run' && skidding > 0.1) { lsz = 1.4; lsx = -0.4; lez = 0.4; lex = -0.3; }
+    if (onBoard && riding) { lsz = 0.95 + Math.sin(t * 2) * 0.1; lsx = 0; lez = 0.35; lex = -0.2; }
+    if (onBike) { lsz = 0.32; lsx = -1.05; lez = 0; lex = -0.6; }
+    if (phase === 'greet') { const w = Math.min(1, phaseT / 0.25); lsz = 0.14 + w * 2.45; lsx = 0; lez = Math.sin(phaseT * 14) * 0.45 * w; lex = 0; }
+    if (phase === 'dance') { lsz = 2.3 + Math.sin(beat * Math.PI) * 0.4; lsx = 0; lez = Math.sin(beat * 2 * Math.PI) * 0.5; lex = 0; }
+    if (airborne) { lsz = 2.2; lsx = 0; lez = 0.3; lex = 0; }
+    if (phase === 'dizzy') { lsz = 0.5; lsx = Math.sin(t * 6) * 0.2; lez = 0; lex = -0.3; }
+    sideArm(armL, 1, lsz, lsx, lez, lex);
+  }
+
+  // head: keep the face towards the viewer, tilt, droop, shake "no" when moping, nod on the beat, wobble when dizzy
+  const shake = phase === 'mope' ? Math.sin(phaseT * 7) * 0.32 * Math.max(0, 1 - phaseT / 1.8) : 0;
+  const nod = phase === 'dance' ? Math.sin(beat * 2 * Math.PI) * 0.08 : 0;
+  const wob = phase === 'dizzy' ? 0.16 * Math.max(0, 1 - phaseT / 1.4) : 0;
+  head.rotation.set(ex.droop * 0.32 + nod - (climbing ? 0.3 : airborne ? 0.12 : 0) - (onBike && riding ? 0.2 : 0) + Math.sin(t * 7) * wob,
+    (Math.abs(yaw) > 1.6 ? 0 : -yaw * (onBike ? 0.7 : 0.55)) + shake + eyeX * 0.15, ex.tilt + Math.cos(t * 7) * wob + dir * lean * 0.5);
+  stars.rotation.y = t * 4;
+  starM.opacity = phase === 'dizzy' ? Math.min(1, 3 * (1.3 - phaseT)) : 0;
+
+  // face
+  for (const [E, s] of [[eyeR, -1], [eyeL, 1]]) {
+    E.lid.scale.y = Math.max(0.06, ex.eye * (1 - ex.squint * 0.72) * (1 - blink * 0.92));
+    E.lid.scale.x = ex.eye;
+    E.lid.position.y = -ex.squint * 2;
+    const spin = phase === 'dizzy' ? 2.2 : 0;
+    E.look.position.set(-yaw * 3.4 + eyeX * 3.6 + Math.cos(t * 9 * s) * spin, ex.lookY * 3 + Math.sin(t * 9 * s) * spin, 8.4);
+    E.browP.position.y = 26 + ex.browUp * 5 - ex.squint * 2;
+    E.browP.rotation.z = s * -ex.brow * 0.38 + s * ex.squint * 0.12;
+  }
+  updateMouth(ex.smile, ex.open);
+  blushM.opacity = ex.blush * 0.38;
+  const tearCycle = (phaseT % 1.4) / 1.4;
+  tearM.opacity = phase === 'mope' || (phase === 'exit-ride' && mood === 'sad') ? Math.sin(tearCycle * Math.PI) * 0.9 : 0;
+  tear.position.y = -8 - tearCycle * 26;
+
+  // banner follows the right hand with a lagging sway; tucked away while climbing / riding, pops out on arrival
+  root.updateMatrixWorld(true);
+  armR.hand.getWorldPosition(vtmp);
+  banner.position.set(vtmp.x, vtmp.y - 12 * S, vtmp.z);
+  swayV += (-(sway - (-vx * 0.0009 / S + danceSway * 0.12 + tumble * 0.5)) * 90 - swayV * 9) * dt;
+  sway += swayV * dt;
+  banner.rotation.set(0, yaw * 0.45, sway + Math.sin(t * 2.4) * 0.015);
+  bannerInner.scale.setScalar(Math.max(0.0001, bannerShow));
+  banner.visible = bannerShow > 0.02 && root.visible;
+
+  // contact shadow: only on the "floor" he stands on, shrinking with height; longer under the bike
+  const air = Math.max(0, (root.position.y - ground) / (300 * S)), long = isRide('bike') ? 1.9 : onBoard ? 1.25 : 1;
+  shadow.position.set(x, ground - 2, -10);
+  shadow.scale.set(130 * S * long * (1 - Math.min(0.6, air)), 34 * S * (1 - Math.min(0.6, air)), 1);
+  shadow.material.opacity = !root.visible || phase === 'peek' || climbing || (isRide('surf') && waveAmp > 0.1) || root.position.y < ground - 5 ? 0 : 1 - Math.min(0.8, air);
+
+  updateParts(dt, G);
+  renderer.render(scene, camera);
+}
+
+// Warm up while the window is still hidden: compile every shader and upload every mesh/texture now, otherwise
+// the first entrance frame stalls for seconds. Everything that is normally hidden is shown for this one render.
+{
+  const hidden = [ladder, skate, surf, wave, bike, plane, chuteG];
+  emit(0, 0, 0, 1, 1, 0, 10, 0.1, 0xffffff, { grow: true });
+  hidden.forEach(o => { o.visible = true; });
+  updateMouth(1, 1); emit(0, 0, 0, 0, 0, 0, 10, 0.1, 0xffffff); updateParts(0, 0);
+  renderer.compile(scene, camera);
+  renderer.render(scene, camera);
+  renderer.getContext().finish();
+  hidden.forEach(o => { o.visible = false; }); parts[0].life = 0; updateParts(0, 0);
+  renderer.clear();
+}
+post('ready');
+</script>
+</body>
+</html>
