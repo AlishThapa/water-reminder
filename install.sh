@@ -21,7 +21,8 @@ if [[ "$1" == "--uninstall" ]]; then
   exit 0
 fi
 
-if ! command -v swiftc >/dev/null; then
+# not `command -v swiftc`: macOS ships a /usr/bin/swiftc stub even with no developer tools installed
+if ! xcode-select -p >/dev/null 2>&1; then
   echo "Xcode Command Line Tools are needed to build. Run:  xcode-select --install"
   exit 1
 fi
