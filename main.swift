@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func arg(_ name: String) -> String? {
         let a = CommandLine.arguments
-        return a.firstIndex(of: name).flatMap { $0 + 1 < a.count ? a[$0 + 1] : nil }
+        return a.firstIndex(of: name).flatMap { $0 + 1 < a.count && !a[$0 + 1].hasPrefix("--") ? a[$0 + 1] : nil }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -170,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
+// A typo in these debugging flags would otherwise just play some other entrance, or a normal reminder.
+let args = CommandLine.arguments, edge = delegate.arg("--from")?.components(separatedBy: ":")[0] ?? ""
+if args.contains("--from") && !["left", "right", "top", "bottom"].contains(edge) || args.contains("--snapshot") && delegate.snapshotDir == nil {
+    delegate.log("usage: WaterReminder [--from left|right|top|bottom[:variant]] [--snapshot <dir>]")
+    exit(2)
+}
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
 app.run()
