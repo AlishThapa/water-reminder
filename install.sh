@@ -70,4 +70,4 @@ launchctl unload "$plist" 2>/dev/null || true
 launchctl load "$plist"
 
 echo "Installed to $app and scheduled hourly 09:00-17:00, Sun-Fri."
-echo "Try it now:  open -a WaterReminder"
+echo "Try it now:  open $app"  # by path: LaunchServices may not know the name yet

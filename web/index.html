@@ -1,7 +1,8 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<title>Water Reminder</title>
 <style>
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
@@ -21,7 +22,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="choices"><button id="yes">Yes 💧</button><button id="later">Remind me later</button></div>
-<script>window.onerror = (m, u, l) => window.webkit?.messageHandlers?.app?.postMessage('err:' + m + ' @' + l);</script>
+<script>window.onerror = (m, u, l) => window.webkit?.messageHandlers?.app?.postMessage('err:' + m + ' @' + l);
+window.onunhandledrejection = e => window.webkit?.messageHandlers?.app?.postMessage('err:' + e.reason);</script>
 <script src="three.min.js"></script>
 <script src="RoomEnvironment.js"></script>
 <script>
@@ -672,7 +674,7 @@ window.start = (spec, inset = 0) => {
     planeX = -planeDir * (W / 2 + 340 * S); plane.visible = true; plane.scale.set(planeDir * S, S, S);
     targetYaw = 0; root.visible = false; bannerTarget = bannerShow = 0; engineDrone = drone(); go('plane');
   } else {
-    x = 0; y = OFF_BOTTOM; targetYaw = Math.PI; bannerTarget = 0; bannerShow = 0; setExpr('effort'); climbPhase = 0; ladderY = GROUND + 28 * S; ladder.visible = true; go('enter-climb');
+    x = 0; y = OFF_BOTTOM; targetYaw = Math.PI; bannerTarget = 0; bannerShow = 0; setExpr('effort'); climbPhase = 0; lastGrab = 0; ladderY = GROUND + 28 * S; ladder.visible = true; go('enter-climb');
   }
   yaw = targetYaw;
   clock.getDelta();

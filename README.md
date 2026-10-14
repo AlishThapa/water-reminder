@@ -34,8 +34,9 @@ it's unsigned — so clear the quarantine flag once:
 xattr -dr com.apple.quarantine /Applications/WaterReminder.app
 ```
 
-Then `open -a WaterReminder`. (Right-click → **Open** also works on some macOS
-versions, but on Sequoia and later the `xattr` command is the reliable route.)
+Then `open -a WaterReminder`. Without the terminal: try to open it once, then go to
+System Settings → Privacy & Security and click **Open Anyway**. (Right-click →
+**Open** no longer bypasses this on Sequoia and later.)
 
 ## Why not a plain download?
 

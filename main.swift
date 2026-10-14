@@ -42,6 +42,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             config.userContentController.addUserScript(WKUserScript(source: "window.SNAPSHOT = true", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         }
         web = ClickWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: config)
+        // Private KVC key, but the only way to get a transparent WKWebView on macOS (underPageBackgroundColor only
+        // colours the overscroll area). If Apple drops it, the overlay turns opaque white.
         web.setValue(false, forKey: "drawsBackground")
         web.navigationDelegate = self
 
@@ -56,7 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
         // Inside a .app the assets live in Contents/Resources/web; run from a plain
         // checkout they sit next to the executable.
-        let beside = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let beside = Bundle.main.executableURL!.resolvingSymlinksInPath()
             .deletingLastPathComponent().appendingPathComponent("web")
         let bundled = Bundle.main.resourceURL?.appendingPathComponent("web")
         let dir = [bundled, beside].compactMap { $0 }
@@ -119,8 +121,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         NSApp.unhideWithoutActivation() // undo snooze()'s hide without stealing focus
         window.orderFrontRegardless()
-        // `--from <edge>[:<variant>]` forces the entrance (e.g. left:surf, top:nochute); otherwise random
-        let edge = arg("--from") ?? ["left", "right", "top", "bottom"].randomElement()!
+        // `--from <edge>[:<variant>]` forces the entrance (e.g. left:surf, top:nochute); otherwise random.
+        // With Reduce Motion on, no falls, flips or rides: he just walks in from a side.
+        let calm = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let edge = arg("--from") ?? (calm ? ["left:walk", "right:walk"] : ["left", "right", "top", "bottom"]).randomElement()!
         // he stands in the lower third of the screen, so keep him above the Dock
         let dock = screen.visibleFrame.minY - screen.frame.minY
         web.evaluateJavaScript("start('\(edge)', \(dock))")

@@ -6,7 +6,10 @@ set -e
 cd "${0:A:h}"
 
 sign_id=""
-[[ "$1" == "--sign" ]] && sign_id="$2"
+if [[ "$1" == "--sign" ]]; then
+  sign_id="$2"
+  [[ -n "$sign_id" ]] || { echo 'usage: ./make-app.sh --sign "Developer ID Application: Your Name (TEAMID)"'; exit 2; }
+fi
 
 app="dist/WaterReminder.app"
 rm -rf dist && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
@@ -19,6 +22,7 @@ done
 lipo -create -output "$bin" "$bin"-{arm64,x86_64}
 rm "$bin"-{arm64,x86_64}
 cp -R web "$app/Contents/Resources/web"
+find "$app" -name .DS_Store -delete
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
