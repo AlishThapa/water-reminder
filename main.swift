@@ -133,8 +133,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func snooze() {
         window.orderOut(nil)
         NSApp.hide(nil) // clicking the button made us the active app; hand focus back to whatever the user was in
+        let asked = Date()
         DispatchQueue.main.asyncAfter(wallDeadline: .now() + snoozeMinutes * 60) { // wall clock: keeps counting while asleep
-            Calendar.current.component(.hour, from: Date()) < endHour ? self.show() : NSApp.terminate(nil)
+            // after a long sleep this fires on wake, so check the day too: a Friday snooze must not reappear on Saturday
+            Calendar.current.isDateInToday(asked) && Calendar.current.component(.hour, from: Date()) < endHour ? self.show() : NSApp.terminate(nil)
         }
     }
 
