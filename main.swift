@@ -47,7 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         window.backgroundColor = .clear
         window.hasShadow = false
         window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle] // also over full-screen apps
         window.ignoresMouseEvents = true
         window.contentView = web
 
