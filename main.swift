@@ -33,7 +33,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let frame = (NSScreen.main ?? NSScreen.screens[0]).frame
+        // no display at all (lid closed, display asleep): skip this run, launchd tries again next hour
+        guard let frame = (NSScreen.main ?? NSScreen.screens.first)?.frame else { return NSApp.terminate(nil) }
         let config = WKWebViewConfiguration()
         config.userContentController.add(self, name: "app")
         config.mediaTypesRequiringUserActionForPlayback = []
@@ -108,11 +109,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     func show() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return NSApp.terminate(nil) }
+        // The page sizes itself once, at load. If the displays changed since (e.g. during a snooze), fit the window to
+        // the current screen and reload; the page posts "ready" again, which lands back here.
+        if window.frame != screen.frame {
+            window.setFrame(screen.frame, display: false)
+            web.reload()
+            return waitForReady()
+        }
         window.orderFrontRegardless()
         // `--from <edge>[:<variant>]` forces the entrance (e.g. left:surf, top:nochute); otherwise random
         let edge = arg("--from") ?? ["left", "right", "top", "bottom"].randomElement()!
         // he stands in the lower third of the screen, so keep him above the Dock
-        let screen = window.screen ?? NSScreen.main!
         let dock = screen.visibleFrame.minY - screen.frame.minY
         web.evaluateJavaScript("start('\(edge)', \(dock))")
     }
