@@ -75,7 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         if body.hasPrefix("rect:") { log(body); return setButtons(String(body.dropFirst(5))) }
         guard snapshotDir == nil else { return }
         log(body)
-        if body == "yes" { NSApp.terminate(nil) }
+        // "away" = nobody answered: quit rather than snooze, so an empty desk gets one reminder an hour, not six
+        if body == "yes" || body == "away" { NSApp.terminate(nil) }
         if body == "later" { snooze() }
     }
 

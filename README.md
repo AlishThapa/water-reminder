@@ -6,6 +6,7 @@ waits for an answer, then leaves through the opposite edge.
 
 - **Yes** → it dances, plays a happy jingle, and goes
 - **Remind later** → sad trombone, and it's back in 5 minutes (until 18:00)
+- **No answer** for 5 minutes → it leaves and waits for the next hour
 
 It runs as a transparent full-screen overlay that clicks pass straight through,
 except over the two buttons. No Dock icon, no menu bar item.
