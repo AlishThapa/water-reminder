@@ -117,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             web.reload()
             return waitForReady()
         }
+        NSApp.unhideWithoutActivation() // undo snooze()'s hide without stealing focus
         window.orderFrontRegardless()
         // `--from <edge>[:<variant>]` forces the entrance (e.g. left:surf, top:nochute); otherwise random
         let edge = arg("--from") ?? ["left", "right", "top", "bottom"].randomElement()!
@@ -127,6 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func snooze() {
         window.orderOut(nil)
+        NSApp.hide(nil) // clicking the button made us the active app; hand focus back to whatever the user was in
         DispatchQueue.main.asyncAfter(wallDeadline: .now() + snoozeMinutes * 60) { // wall clock: keeps counting while asleep
             Calendar.current.component(.hour, from: Date()) < endHour ? self.show() : NSApp.terminate(nil)
         }
