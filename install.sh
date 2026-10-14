@@ -14,7 +14,9 @@ app=/Applications/WaterReminder.app
 
 if [[ "$1" == "--uninstall" ]]; then
   launchctl unload "$plist" 2>/dev/null || true
-  rm -f "$plist"; rm -rf "$app"
+  # unload stops a copy launchd started, not one started with `open`
+  pkill -x WaterReminder 2>/dev/null || true
+  rm -f "$plist"; rm -rf "$app" ~/Library/WebKit/$label ~/Library/Caches/$label
   echo "Uninstalled."
   exit 0
 fi
@@ -37,6 +39,7 @@ fi
 echo "Building..."
 (cd "$src" && ./make-app.sh >/dev/null)
 
+pkill -x WaterReminder 2>/dev/null || true # an old copy may be on screen or snoozing
 rm -rf "$app"
 cp -R "$src/dist/WaterReminder.app" "$app"
 # Locally built, but strip any xattrs inherited from the checkout just in case.
