@@ -28,7 +28,8 @@ fi
 if [[ -f "${0:A:h}/main.swift" ]]; then
   src="${0:A:h}"
 else
-  src=$(mktemp -d)/water-reminder
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  src=$tmp/water-reminder
   echo "Fetching source..."
   git clone -q --depth 1 "$repo" "$src"
 fi

@@ -56,8 +56,8 @@ instead of a binary.
 | | |
 | --- | --- |
 | Run it now | `open -a WaterReminder` |
-| Change the schedule | edit `install.sh`, re-run it |
-| Uninstall | `curl -fsSL .../install.sh \| zsh -s -- --uninstall` |
+| Change the schedule | clone the repo (see below), edit the hours and days in `install.sh`, run `./install.sh` |
+| Uninstall | `curl -fsSL https://raw.githubusercontent.com/AlishThapa/water-reminder/main/install.sh \| zsh -s -- --uninstall` |
 
 Default schedule is hourly, 09:00–17:00, Sunday–Friday. Snooze is 5 minutes and
 the app stops asking after 18:00 — both are constants at the top of `main.swift`.

@@ -108,6 +108,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     }
 
     func snapshots() {
+        do { try FileManager.default.createDirectory(atPath: snapshotDir!, withIntermediateDirectories: true) }
+        catch { log("--snapshot: \(error.localizedDescription)"); exit(1) }
         window.orderFrontRegardless()
         // (seconds to wait, JS to run first, snapshot name)
         let steps: [(Double, String, String)] = [
