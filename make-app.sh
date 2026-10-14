@@ -6,13 +6,24 @@ set -e
 cd "${0:A:h}"
 
 sign_id=""
-[[ "$1" == "--sign" ]] && sign_id="$2"
+if [[ "$1" == "--sign" ]]; then
+  sign_id="$2"
+  [[ -n "$sign_id" ]] || { echo 'usage: ./make-app.sh --sign "Developer ID Application: Your Name (TEAMID)"'; exit 2; }
+fi
 
 app="dist/WaterReminder.app"
 rm -rf dist && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-swiftc -O main.swift -o "$app/Contents/MacOS/WaterReminder"
+# Universal binary pinned to macOS 12; without -target it would only run on this Mac's OS version and CPU.
+bin="$app/Contents/MacOS/WaterReminder"
+for arch in arm64 x86_64; do
+  swiftc -O main.swift -target $arch-apple-macos12.0 -o "$bin-$arch"
+done
+lipo -create -output "$bin" "$bin"-{arm64,x86_64}
+rm "$bin"-{arm64,x86_64}
 cp -R web "$app/Contents/Resources/web"
+cp AppIcon.icns "$app/Contents/Resources/"
+find "$app" -name .DS_Store -delete
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -22,6 +33,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
   <key>CFBundleDisplayName</key><string>Water Reminder</string>
   <key>CFBundleIdentifier</key><string>com.user.water-reminder</string>
   <key>CFBundleExecutable</key><string>WaterReminder</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>

@@ -1,7 +1,8 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<title>Water Reminder</title>
 <style>
   html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
     font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif; }
@@ -21,7 +22,8 @@
 <body>
 <canvas id="c"></canvas>
 <div id="choices"><button id="yes">Yes 💧</button><button id="later">Remind me later</button></div>
-<script>window.onerror = (m, u, l) => window.webkit?.messageHandlers?.app?.postMessage('err:' + m + ' @' + l);</script>
+<script>window.onerror = (m, u, l) => window.webkit?.messageHandlers?.app?.postMessage('err:' + m + ' @' + l);
+window.onunhandledrejection = e => window.webkit?.messageHandlers?.app?.postMessage('err:' + e.reason);</script>
 <script src="three.min.js"></script>
 <script src="RoomEnvironment.js"></script>
 <script>
@@ -238,13 +240,16 @@ const rr = (w, h, r) => { const s = new THREE.Shape(); s.moveTo(-w / 2 + r, -h /
   s.lineTo(-w / 2, -h / 2 + r); s.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2); return s; };
 mesh(new THREE.ExtrudeGeometry(rr(250, 125, 22), { depth: 6, bevelThickness: 2, bevelSize: 2, bevelSegments: 4, curveSegments: 12 }), M(0xffffff, { roughness: 0.3, clearcoat: 0.6 }), board, [0, 0, -3]);
 mesh(new THREE.PlaneGeometry(250, 125), new THREE.MeshBasicMaterial({ map: boardTex, transparent: true, toneMapped: false }), board, [0, 0, 5.2]);
+// ctx.roundRect needs Safari 16's WebKit, which an unpatched macOS 12 doesn't have
+const roundRect = (g, x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
 function setBoard(text, color) {
   const g = boardCanvas.getContext('2d');
   g.clearRect(0, 0, 1024, 512);
   g.fillStyle = '#ffffff';
-  g.beginPath(); g.roundRect(6, 6, 1012, 500, 88); g.fill();
+  roundRect(g, 6, 6, 1012, 500, 88); g.fill();
   g.lineWidth = 22; g.strokeStyle = color;
-  g.beginPath(); g.roundRect(22, 22, 980, 468, 74); g.stroke();
+  roundRect(g, 22, 22, 980, 468, 74); g.stroke();
   g.fillStyle = '#1c1c1e'; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.font = '700 104px -apple-system, system-ui';
   const lines = text.split('\n');
@@ -594,7 +599,7 @@ let GROUND = -H / 2 + 100 * S; // feet height when standing: lower third of the 
 banner.scale.setScalar(S);
 ladder.scale.setScalar(S);
 const G = 2600 * S, OFF_TOP = H / 2 + 60, OFF_BOTTOM = -H / 2 - 360 * S;
-const NO_ANSWER_MS = 5 * 60 * 1000; // no click in 5 min counts as "remind me later"
+const NO_ANSWER_MS = 5 * 60 * 1000; // no click in 5 min: probably away, so he leaves and the app quits until the next hourly run
 // side entrances: cruise speed, acceleration, braking (points/s, times S), how far off-screen it starts/ends, how often it's picked
 const RIDES = {
   walk:  { v: 175, acc: 300, brake: 260, off: 260, w: 1 },
@@ -605,7 +610,7 @@ const RIDES = {
 };
 const RIDE_YAW = { walk: 0.6, run: 0.6, skate: 0.2, surf: 0.2, bike: 1.15 }; // facing while riding (times dir)
 const STOP_YAW = { walk: 0, run: 0, skate: 0.15, surf: 0.15, bike: 0.3 };   // facing while stopped at the centre
-let phase = 'hidden', phaseT = 0, from = 'left', exitTo = 'right', mood = 'ask', noAnswer = null;
+let phase = 'hidden', phaseT = 0, from = 'left', exitTo = 'right', mood = 'ask', noAnswer = null, away = false;
 let ride = 'walk', dir = 1, cruise = 0, braking = 0, skidded = false;
 let x = 0, y = 0, vx = 0, vy = 0, airborne = false, walkPhase = 0, lastStep = 0, climbPhase = 0, lastGrab = 0;
 let squash = 1, squashV = 0, yaw = 0, targetYaw = 0, blinkT = 2, blinkAmt = 0, tumble = 0;
@@ -648,7 +653,7 @@ window.start = (spec, inset = 0) => {
   const [edge, variant] = spec.split(':');
   GROUND = -H / 2 + inset + 100 * S;
   from = edge; exitTo = { left: 'right', right: 'left', top: 'bottom', bottom: 'top' }[edge];
-  mood = 'ask'; choices.classList.remove('show'); post('rect:none'); clearTimeout(noAnswer);
+  mood = 'ask'; away = false; choices.classList.remove('show'); post('rect:none'); clearTimeout(noAnswer);
   stopLoops(); rumble = sea = engineDrone = engineSnd = null; engineOn = false; rpm = 0; parts.forEach(p => { p.life = 0; });
   setBoard('Hey! 👋', '#ff9f0a');
   camera.position.set(0, 0, camDist);
@@ -669,7 +674,7 @@ window.start = (spec, inset = 0) => {
     planeX = -planeDir * (W / 2 + 340 * S); plane.visible = true; plane.scale.set(planeDir * S, S, S);
     targetYaw = 0; root.visible = false; bannerTarget = bannerShow = 0; engineDrone = drone(); go('plane');
   } else {
-    x = 0; y = OFF_BOTTOM; targetYaw = Math.PI; bannerTarget = 0; bannerShow = 0; setExpr('effort'); climbPhase = 0; ladderY = GROUND + 28 * S; ladder.visible = true; go('enter-climb');
+    x = 0; y = OFF_BOTTOM; targetYaw = Math.PI; bannerTarget = 0; bannerShow = 0; setExpr('effort'); climbPhase = 0; lastGrab = 0; ladderY = GROUND + 28 * S; ladder.visible = true; go('enter-climb');
   }
   yaw = targetYaw;
   clock.getDelta();
@@ -715,13 +720,13 @@ function leave() {
 function finish() {
   phase = 'hidden'; renderer.setAnimationLoop(null); renderer.clear();
   stopLoops(); engineOn = false;
-  post(mood === 'happy' ? 'yes' : 'later');
+  post(mood === 'happy' ? 'yes' : away ? 'away' : 'later');
 }
 function showChoices() {
   choices.style.top = (H / 2 - GROUND + 26) + 'px';
   choices.classList.add('show'); sfx.pop();
   setTimeout(() => { const r = choices.getBoundingClientRect(); post('rect:' + [r.left, r.top, r.width, r.height].map(Math.round).join(',')); }, 500);
-  noAnswer = setTimeout(() => answer(false), NO_ANSWER_MS);
+  noAnswer = setTimeout(() => { away = true; answer(false); }, NO_ANSWER_MS);
 }
 document.getElementById('yes').onclick = () => answer(true);
 document.getElementById('later').onclick = () => answer(false);

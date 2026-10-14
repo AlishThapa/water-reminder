@@ -1,0 +1,14 @@
+name: build
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./make-app.sh
+      - run: codesign --verify --deep --strict dist/WaterReminder.app
+      - run: for arch in arm64 x86_64; do lipo dist/WaterReminder.app/Contents/MacOS/WaterReminder -verify_arch $arch; done
+      - name: A bad --from exits with usage
+        run: code=0; dist/WaterReminder.app/Contents/MacOS/WaterReminder --from diagonal || code=$?; test $code -eq 2
+      - uses: actions/upload-artifact@v4
+        with: { name: WaterReminder-macos, path: dist/WaterReminder-macos.zip }

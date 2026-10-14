@@ -6,6 +6,7 @@ waits for an answer, then leaves through the opposite edge.
 
 - **Yes** → it dances, plays a happy jingle, and goes
 - **Remind later** → sad trombone, and it's back in 5 minutes (until 18:00)
+- **No answer** for 5 minutes → it leaves and waits for the next hour
 
 It runs as a transparent full-screen overlay that clicks pass straight through,
 except over the two buttons. No Dock icon, no menu bar item.
@@ -33,8 +34,9 @@ it's unsigned — so clear the quarantine flag once:
 xattr -dr com.apple.quarantine /Applications/WaterReminder.app
 ```
 
-Then `open -a WaterReminder`. (Right-click → **Open** also works on some macOS
-versions, but on Sequoia and later the `xattr` command is the reliable route.)
+Then `open -a WaterReminder`. Without the terminal: try to open it once, then go to
+System Settings → Privacy & Security and click **Open Anyway**. (Right-click →
+**Open** no longer bypasses this on Sequoia and later.)
 
 ## Why not a plain download?
 
@@ -55,8 +57,8 @@ instead of a binary.
 | | |
 | --- | --- |
 | Run it now | `open -a WaterReminder` |
-| Change the schedule | edit `install.sh`, re-run it |
-| Uninstall | `curl -fsSL .../install.sh \| zsh -s -- --uninstall` |
+| Change the schedule | clone the repo (see below), edit the hours and days in `install.sh`, run `./install.sh` |
+| Uninstall | `curl -fsSL https://raw.githubusercontent.com/AlishThapa/water-reminder/main/install.sh \| zsh -s -- --uninstall` |
 
 Default schedule is hourly, 09:00–17:00, Sunday–Friday. Snooze is 5 minutes and
 the app stops asking after 18:00 — both are constants at the top of `main.swift`.
@@ -80,11 +82,17 @@ cd water-reminder
 | --- | --- |
 | `main.swift` | AppKit overlay window hosting a WKWebView |
 | `web/index.html` | The character, animations, and banner UI |
-| `web/three.min.js` | three.js |
-| `web/RoomEnvironment.js` | three.js lighting environment |
+| `web/three.min.js` | [three.js r147](https://github.com/mrdoob/three.js/blob/r147/build/three.min.js), unmodified |
+| `web/RoomEnvironment.js` | Lighting environment, [`examples/js/environments/RoomEnvironment.js` from r147](https://github.com/mrdoob/three.js/blob/r147/examples/js/environments/RoomEnvironment.js), unmodified |
+| `AppIcon.icns` | App icon (the character, rendered with `--snapshot`) |
 | `make-app.sh` | Builds the `.app` bundle and release zip |
 | `install.sh` | Build + install + schedule (the one-liner above) |
-| `install.command` | Older in-place build, double-clickable in Finder |
+| `install.command` | Runs `install.sh`, double-clickable in Finder |
+
+Upgrading three.js past r147 is a small port, not a file swap: r148 dropped the
+`examples/js` builds `RoomEnvironment.js` comes from, and r152 replaced the
+`outputEncoding` / `sRGBEncoding` / `texture.encoding` API that `index.html` uses
+with `outputColorSpace` / `colorSpace`.
 
 The compiled binary is deliberately not committed — see
 [Why not a plain download?](#why-not-a-plain-download).

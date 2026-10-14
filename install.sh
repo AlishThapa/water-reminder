@@ -14,21 +14,26 @@ app=/Applications/WaterReminder.app
 
 if [[ "$1" == "--uninstall" ]]; then
   launchctl unload "$plist" 2>/dev/null || true
-  rm -f "$plist"; rm -rf "$app"
+  # unload stops a copy launchd started, not one started with `open`
+  pkill -x WaterReminder 2>/dev/null || true
+  rm -f "$plist"; rm -rf "$app" ~/Library/WebKit/$label ~/Library/Caches/$label ~/Library/Logs/WaterReminder.log
   echo "Uninstalled."
   exit 0
 fi
 
-if ! command -v swiftc >/dev/null; then
+# not `command -v swiftc`: macOS ships a /usr/bin/swiftc stub even with no developer tools installed
+if ! xcode-select -p >/dev/null 2>&1; then
   echo "Xcode Command Line Tools are needed to build. Run:  xcode-select --install"
   exit 1
 fi
 
 # Build in a temp checkout unless we're already inside the repo.
-if [[ -f "${0:A:h}/main.swift" ]]; then
+# (under `curl | zsh`, $0 is "zsh" and ${0:A:h} is just the current directory)
+if [[ ${0:t} == install.sh && -f "${0:A:h}/main.swift" ]]; then
   src="${0:A:h}"
 else
-  src=$(mktemp -d)/water-reminder
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  src=$tmp/water-reminder
   echo "Fetching source..."
   git clone -q --depth 1 "$repo" "$src"
 fi
@@ -36,12 +41,14 @@ fi
 echo "Building..."
 (cd "$src" && ./make-app.sh >/dev/null)
 
+pkill -x WaterReminder 2>/dev/null || true # an old copy may be on screen or snoozing
 rm -rf "$app"
 cp -R "$src/dist/WaterReminder.app" "$app"
 # Locally built, but strip any xattrs inherited from the checkout just in case.
 xattr -cr "$app" 2>/dev/null || true
 
 entries=""
+# Weekday 0 = Sunday, so this is Sunday-Friday on purpose, not an off-by-one. Mon-Fri would be 1 2 3 4 5.
 for day in 0 1 2 3 4 5; do
   for hour in {9..17}; do
     entries+="<dict><key>Weekday</key><integer>$day</integer><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>0</integer></dict>"$'\n'
@@ -55,6 +62,7 @@ cat > "$plist" <<EOF
 <plist version="1.0"><dict>
 <key>Label</key><string>$label</string>
 <key>ProgramArguments</key><array><string>$app/Contents/MacOS/WaterReminder</string></array>
+<key>StandardErrorPath</key><string>$HOME/Library/Logs/WaterReminder.log</string>
 <key>StartCalendarInterval</key><array>
 $entries</array></dict></plist>
 EOF
@@ -63,4 +71,4 @@ launchctl unload "$plist" 2>/dev/null || true
 launchctl load "$plist"
 
 echo "Installed to $app and scheduled hourly 09:00-17:00, Sun-Fri."
-echo "Try it now:  open -a WaterReminder"
+echo "Try it now:  open $app"  # by path: LaunchServices may not know the name yet
