@@ -84,6 +84,7 @@ cd water-reminder
 | `web/index.html` | The character, animations, and banner UI |
 | `web/three.min.js` | [three.js r147](https://github.com/mrdoob/three.js/blob/r147/build/three.min.js), unmodified |
 | `web/RoomEnvironment.js` | Lighting environment, [`examples/js/environments/RoomEnvironment.js` from r147](https://github.com/mrdoob/three.js/blob/r147/examples/js/environments/RoomEnvironment.js), unmodified |
+| `AppIcon.icns` | App icon (the character, rendered with `--snapshot`) |
 | `make-app.sh` | Builds the `.app` bundle and release zip |
 | `install.sh` | Build + install + schedule (the one-liner above) |
 | `install.command` | Runs `install.sh`, double-clickable in Finder |

@@ -22,6 +22,7 @@ done
 lipo -create -output "$bin" "$bin"-{arm64,x86_64}
 rm "$bin"-{arm64,x86_64}
 cp -R web "$app/Contents/Resources/web"
+cp AppIcon.icns "$app/Contents/Resources/"
 find "$app" -name .DS_Store -delete
 
 cat > "$app/Contents/Info.plist" <<'EOF'
@@ -32,6 +33,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
   <key>CFBundleDisplayName</key><string>Water Reminder</string>
   <key>CFBundleIdentifier</key><string>com.user.water-reminder</string>
   <key>CFBundleExecutable</key><string>WaterReminder</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>
