@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func snooze() {
         window.orderOut(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + snoozeMinutes * 60) {
+        DispatchQueue.main.asyncAfter(wallDeadline: .now() + snoozeMinutes * 60) { // wall clock: keeps counting while asleep
             Calendar.current.component(.hour, from: Date()) < endHour ? self.show() : NSApp.terminate(nil)
         }
     }
