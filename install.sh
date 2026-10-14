@@ -16,7 +16,7 @@ if [[ "$1" == "--uninstall" ]]; then
   launchctl unload "$plist" 2>/dev/null || true
   # unload stops a copy launchd started, not one started with `open`
   pkill -x WaterReminder 2>/dev/null || true
-  rm -f "$plist"; rm -rf "$app" ~/Library/WebKit/$label ~/Library/Caches/$label
+  rm -f "$plist"; rm -rf "$app" ~/Library/WebKit/$label ~/Library/Caches/$label ~/Library/Logs/WaterReminder.log
   echo "Uninstalled."
   exit 0
 fi
@@ -60,6 +60,7 @@ cat > "$plist" <<EOF
 <plist version="1.0"><dict>
 <key>Label</key><string>$label</string>
 <key>ProgramArguments</key><array><string>$app/Contents/MacOS/WaterReminder</string></array>
+<key>StandardErrorPath</key><string>$HOME/Library/Logs/WaterReminder.log</string>
 <key>StartCalendarInterval</key><array>
 $entries</array></dict></plist>
 EOF

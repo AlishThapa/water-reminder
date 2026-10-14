@@ -17,11 +17,12 @@ final class OverlayWindow: NSWindow {
     override var canBecomeKey: Bool { true }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNavigationDelegate {
     var window: NSWindow!
     var web: WKWebView!
     var buttons: NSRect? // in screen coordinates, while the choices are on screen
     var hitTimer: Timer?
+    var readyTimeout: Timer?
 
     // `WaterReminder --snapshot <dir>`: play a scripted run and save PNGs, for checking the look.
     lazy var snapshotDir = arg("--snapshot")
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         }
         web = ClickWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: config)
         web.setValue(false, forKey: "drawsBackground")
+        web.navigationDelegate = self
 
         window = OverlayWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.isOpaque = false
@@ -59,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         let dir = [bundled, beside].compactMap { $0 }
             .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) } ?? beside
         web.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
+        waitForReady()
 
         // Clicks pass through the overlay except over the buttons.
         hitTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
@@ -70,7 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         guard let body = message.body as? String else { return }
-        if body == "ready" { return snapshotDir == nil ? show() : snapshots() }
+        if body == "ready" { readyTimeout?.invalidate(); return snapshotDir == nil ? show() : snapshots() }
         if body.hasPrefix("err:") { return FileHandle.standardError.write((body + "\n").data(using: .utf8)!) }
         if body.hasPrefix("rect:") { log(body); return setButtons(String(body.dropFirst(5))) }
         guard snapshotDir == nil else { return }
@@ -78,6 +81,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
         // "away" = nobody answered: quit rather than snooze, so an empty desk gets one reminder an hour, not six
         if body == "yes" || body == "away" { NSApp.terminate(nil) }
         if body == "later" { snooze() }
+    }
+
+    // A page that never gets going (web/ missing, a JS error before "ready", WebContent crashing) must not leave an
+    // invisible process behind: launchd won't start the next hourly run while this one is still alive.
+    func waitForReady() {
+        readyTimeout = Timer.scheduledTimer(withTimeInterval: 30, repeats: false) { [weak self] _ in
+            self?.log("page never posted ready, quitting")
+            NSApp.terminate(nil)
+        }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        log("web content process died, quitting")
+        NSApp.terminate(nil)
     }
 
     func log(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
