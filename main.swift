@@ -63,13 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
             .first { FileManager.default.fileExists(atPath: $0.appendingPathComponent("index.html").path) } ?? beside
         web.loadFileURL(dir.appendingPathComponent("index.html"), allowingReadAccessTo: dir)
         waitForReady()
-
-        // Clicks pass through the overlay except over the buttons.
-        hitTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let over = self.buttons?.contains(NSEvent.mouseLocation) ?? false
-            if self.window.ignoresMouseEvents == over { self.window.ignoresMouseEvents = !over }
-        }
     }
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -101,11 +94,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKScriptMessageHandler
     func log(_ s: String) { FileHandle.standardError.write((s + "\n").data(using: .utf8)!) }
 
     // "x,y,w,h" in page points (top-left origin) -> screen rect, padded a little.
+    // Clicks pass through the overlay except over the buttons, so poll the mouse, but only while they're up.
     func setButtons(_ spec: String) {
+        hitTimer?.invalidate()
         let n = spec.split(separator: ",").compactMap { Double($0) }
         guard n.count == 4 else { buttons = nil; window.ignoresMouseEvents = true; return }
         let f = window.frame
         buttons = NSRect(x: f.minX + n[0], y: f.maxY - n[1] - n[3], width: n[2], height: n[3]).insetBy(dx: -6, dy: -6)
+        hitTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let over = self.buttons?.contains(NSEvent.mouseLocation) ?? false
+            if self.window.ignoresMouseEvents == over { self.window.ignoresMouseEvents = !over }
+        }
     }
 
     func show() {
