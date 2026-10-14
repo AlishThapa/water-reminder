@@ -11,7 +11,13 @@ sign_id=""
 app="dist/WaterReminder.app"
 rm -rf dist && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-swiftc -O main.swift -o "$app/Contents/MacOS/WaterReminder"
+# Universal binary pinned to macOS 12; without -target it would only run on this Mac's OS version and CPU.
+bin="$app/Contents/MacOS/WaterReminder"
+for arch in arm64 x86_64; do
+  swiftc -O main.swift -target $arch-apple-macos12.0 -o "$bin-$arch"
+done
+lipo -create -output "$bin" "$bin"-{arm64,x86_64}
+rm "$bin"-{arm64,x86_64}
 cp -R web "$app/Contents/Resources/web"
 
 cat > "$app/Contents/Info.plist" <<'EOF'

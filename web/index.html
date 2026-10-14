@@ -238,13 +238,16 @@ const rr = (w, h, r) => { const s = new THREE.Shape(); s.moveTo(-w / 2 + r, -h /
   s.lineTo(-w / 2, -h / 2 + r); s.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2); return s; };
 mesh(new THREE.ExtrudeGeometry(rr(250, 125, 22), { depth: 6, bevelThickness: 2, bevelSize: 2, bevelSegments: 4, curveSegments: 12 }), M(0xffffff, { roughness: 0.3, clearcoat: 0.6 }), board, [0, 0, -3]);
 mesh(new THREE.PlaneGeometry(250, 125), new THREE.MeshBasicMaterial({ map: boardTex, transparent: true, toneMapped: false }), board, [0, 0, 5.2]);
+// ctx.roundRect needs Safari 16's WebKit, which an unpatched macOS 12 doesn't have
+const roundRect = (g, x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y);
+  g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
 function setBoard(text, color) {
   const g = boardCanvas.getContext('2d');
   g.clearRect(0, 0, 1024, 512);
   g.fillStyle = '#ffffff';
-  g.beginPath(); g.roundRect(6, 6, 1012, 500, 88); g.fill();
+  roundRect(g, 6, 6, 1012, 500, 88); g.fill();
   g.lineWidth = 22; g.strokeStyle = color;
-  g.beginPath(); g.roundRect(22, 22, 980, 468, 74); g.stroke();
+  roundRect(g, 22, 22, 980, 468, 74); g.stroke();
   g.fillStyle = '#1c1c1e'; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.font = '700 104px -apple-system, system-ui';
   const lines = text.split('\n');
