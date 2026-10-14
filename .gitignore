@@ -1,4 +1,4 @@
-# Compiled binary — rebuild with ./install.command
+# Compiled binary from a bare `swiftc main.swift -o WaterReminder`
 WaterReminder
 .DS_Store
 dist/

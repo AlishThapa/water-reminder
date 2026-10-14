@@ -85,7 +85,7 @@ cd water-reminder
 | `web/RoomEnvironment.js` | three.js lighting environment |
 | `make-app.sh` | Builds the `.app` bundle and release zip |
 | `install.sh` | Build + install + schedule (the one-liner above) |
-| `install.command` | Older in-place build, double-clickable in Finder |
+| `install.command` | Runs `install.sh`, double-clickable in Finder |
 
 The compiled binary is deliberately not committed — see
 [Why not a plain download?](#why-not-a-plain-download).
