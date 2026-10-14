@@ -28,7 +28,8 @@ if ! xcode-select -p >/dev/null 2>&1; then
 fi
 
 # Build in a temp checkout unless we're already inside the repo.
-if [[ -f "${0:A:h}/main.swift" ]]; then
+# (under `curl | zsh`, $0 is "zsh" and ${0:A:h} is just the current directory)
+if [[ ${0:t} == install.sh && -f "${0:A:h}/main.swift" ]]; then
   src="${0:A:h}"
 else
   tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
