@@ -43,6 +43,7 @@ cp -R "$src/dist/WaterReminder.app" "$app"
 xattr -cr "$app" 2>/dev/null || true
 
 entries=""
+# Weekday 0 = Sunday, so this is Sunday-Friday on purpose, not an off-by-one. Mon-Fri would be 1 2 3 4 5.
 for day in 0 1 2 3 4 5; do
   for hour in {9..17}; do
     entries+="<dict><key>Weekday</key><integer>$day</integer><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>0</integer></dict>"$'\n'
