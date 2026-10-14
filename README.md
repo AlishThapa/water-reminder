@@ -81,11 +81,16 @@ cd water-reminder
 | --- | --- |
 | `main.swift` | AppKit overlay window hosting a WKWebView |
 | `web/index.html` | The character, animations, and banner UI |
-| `web/three.min.js` | three.js |
-| `web/RoomEnvironment.js` | three.js lighting environment |
+| `web/three.min.js` | [three.js r147](https://github.com/mrdoob/three.js/blob/r147/build/three.min.js), unmodified |
+| `web/RoomEnvironment.js` | Lighting environment, [`examples/js/environments/RoomEnvironment.js` from r147](https://github.com/mrdoob/three.js/blob/r147/examples/js/environments/RoomEnvironment.js), unmodified |
 | `make-app.sh` | Builds the `.app` bundle and release zip |
 | `install.sh` | Build + install + schedule (the one-liner above) |
 | `install.command` | Runs `install.sh`, double-clickable in Finder |
+
+Upgrading three.js past r147 is a small port, not a file swap: r148 dropped the
+`examples/js` builds `RoomEnvironment.js` comes from, and r152 replaced the
+`outputEncoding` / `sRGBEncoding` / `texture.encoding` API that `index.html` uses
+with `outputColorSpace` / `colorSpace`.
 
 The compiled binary is deliberately not committed — see
 [Why not a plain download?](#why-not-a-plain-download).
