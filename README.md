@@ -7,8 +7,13 @@ waits for an answer, then leaves through the opposite edge.
 - **Yes** → it dances, plays a happy jingle, and goes
 - **Remind later** → sad trombone, and it's back in 5 minutes (until 18:00)
 
-It runs as a transparent full-screen overlay that clicks pass straight through,
-except over the two buttons. No Dock icon, no menu bar item.
+Every answer is logged, so **clicking the app opens a dashboard** instead of a
+reminder: glasses today against a goal of 8, your streak, the last 14 days drunk
+vs snoozed, a 12-week heatmap, and the recent log. There's a **+ Log a glass**
+button for the ones you drink without being asked.
+
+The reminder itself runs as a transparent full-screen overlay that clicks pass
+straight through, except over the two buttons. No Dock icon, no menu bar item.
 
 ## Get the app
 
@@ -54,19 +59,54 @@ instead of a binary.
 
 | | |
 | --- | --- |
-| Run it now | `open -a WaterReminder` |
-| Change the schedule | edit `install.sh`, re-run it |
+| Open the dashboard | `open -a WaterReminder` |
+| Trigger a reminder now | `WaterReminder --remind` |
+| Change the schedule | dashboard → **Settings** |
 | Uninstall | `curl -fsSL .../install.sh \| zsh -s -- --uninstall` |
 
-Default schedule is hourly, 09:00–17:00, Sunday–Friday. Snooze is 5 minutes and
-the app stops asking after 18:00 — both are constants at the top of `main.swift`.
+## Settings
+
+The **Settings** tab in the dashboard covers everything there is to change:
+
+| | |
+| --- | --- |
+| Remind me | the hourly schedule, on or off |
+| Hours | first and last reminder of the day (default 09:00–17:00) |
+| Days | which weekdays it runs (default Sunday–Friday) |
+| Entrance | surprise me, or pin it to walking / bike / skateboard / surf / parachute / falling in, or to one edge |
+| Volume | the jingles and sound effects |
+| Snooze for | how long **Remind me later** waits (default 5 min) |
+| Stop asking after | a snooze past this hour gives up for the day (default 18:00) |
+| Daily goal | glasses that count as a full day (default 8) |
+| Test reminder | runs one right now, dashboard stays open |
+| Clear history | deletes the log |
+
+Changing the hours, days, or the on/off switch rewrites the LaunchAgent and
+reloads it on the spot — no reinstall, no editing plists by hand.
 
 Handy flags when running the binary directly:
 
 ```sh
+WaterReminder                      # no arguments: the dashboard
+WaterReminder --remind             # the reminder overlay (what the schedule runs)
 WaterReminder --from left:surf     # force an entrance (left|right|top|bottom)
 WaterReminder --snapshot ./shots   # play a scripted run, save PNGs
 ```
+
+## Where the data lives
+
+```
+~/Library/Application Support/WaterReminder/log.jsonl     answers
+~/Library/Application Support/WaterReminder/settings.json  settings
+```
+
+The log is one JSON object per line — `{"t":"<ISO 8601>","a":"yes"|"later"|"glass"}` — appended
+as you answer. Delete the file to start over; it's plain text, so it's easy to graph
+elsewhere or sync yourself.
+
+**Upgrading from a version without the dashboard?** Re-run the installer. The
+schedule now launches the app with `--remind`, and an old LaunchAgent would pop
+the dashboard on the hour instead of the character.
 
 ## Build from source
 
@@ -78,10 +118,14 @@ cd water-reminder
 
 | Path | What it is |
 | --- | --- |
-| `main.swift` | AppKit overlay window hosting a WKWebView |
+| `main.swift` | AppKit overlay + dashboard windows, settings, the LaunchAgent writer |
 | `web/index.html` | The character, animations, and banner UI |
+| `web/dashboard.html` | The tracking dashboard |
 | `web/three.min.js` | three.js |
 | `web/RoomEnvironment.js` | three.js lighting environment |
+| `assets/icon.svg` | The logo, hand-written SVG |
+| `assets/AppIcon.icns` | Generated from it by `make-icon.sh` (committed) |
+| `make-icon.sh` | Re-renders the icon — only needed if the artwork changes |
 | `make-app.sh` | Builds the `.app` bundle and release zip |
 | `install.sh` | Build + install + schedule (the one-liner above) |
 | `install.command` | Older in-place build, double-clickable in Finder |

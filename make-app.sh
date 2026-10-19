@@ -13,6 +13,7 @@ rm -rf dist && mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
 swiftc -O main.swift -o "$app/Contents/MacOS/WaterReminder"
 cp -R web "$app/Contents/Resources/web"
+cp assets/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -22,6 +23,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
   <key>CFBundleDisplayName</key><string>Water Reminder</string>
   <key>CFBundleIdentifier</key><string>com.user.water-reminder</string>
   <key>CFBundleExecutable</key><string>WaterReminder</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>

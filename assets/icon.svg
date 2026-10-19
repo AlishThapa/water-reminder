@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4aa8ff"/>
+      <stop offset=".55" stop-color="#0a84ff"/>
+      <stop offset="1" stop-color="#0a5ad6"/>
+    </linearGradient>
+    <linearGradient id="drop" x1=".3" y1="0" x2=".7" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset=".6" stop-color="#eaf4ff"/>
+      <stop offset="1" stop-color="#c9e2ff"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx=".5" cy=".12" r=".75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".45"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="26" stdDeviation="30" flood-color="#06306b" flood-opacity=".35"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="232" fill="url(#sheen)"/>
+
+  <!-- droplet: rounded shoulders into a soft tip, body centred on (512, 630) -->
+  <g filter="url(#soft)">
+    <path fill="url(#drop)" d="M512 252 C 556 344, 724 492, 724 630 a 212 212 0 1 1 -424 0 C 300 492, 468 344, 512 252 Z"/>
+  </g>
+  <!-- highlight, clear of the eyes -->
+  <ellipse cx="412" cy="536" rx="40" ry="62" fill="#fff" opacity=".8" transform="rotate(-22 412 536)"/>
+  <!-- a face, so it reads as the character rather than just a drop -->
+  <g fill="#0b3f82">
+    <ellipse cx="452" cy="634" rx="29" ry="35"/>
+    <ellipse cx="572" cy="634" rx="29" ry="35"/>
+  </g>
+  <path d="M458 716 q54 52 108 0" stroke="#0b3f82" stroke-width="24" stroke-linecap="round" fill="none"/>
+</svg>

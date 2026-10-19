@@ -54,7 +54,7 @@ cat > "$plist" <<EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>$label</string>
-<key>ProgramArguments</key><array><string>$app/Contents/MacOS/WaterReminder</string></array>
+<key>ProgramArguments</key><array><string>$app/Contents/MacOS/WaterReminder</string><string>--remind</string></array>
 <key>StartCalendarInterval</key><array>
 $entries</array></dict></plist>
 EOF
