@@ -449,6 +449,7 @@ function updateParts(dt, grav) {
 // ---------- sound (synthesised with Web Audio, no files) ----------
 const AC = new (window.AudioContext || window.webkitAudioContext)();
 const master = AC.createGain(); master.gain.value = 0.5; master.connect(AC.destination);
+window.setVolume = v => { master.gain.value = Math.min(Math.max(+v || 0, 0), 1); }; // Settings -> Volume
 function tone(freq, start, dur, { type = 'sine', vol = 0.3, slideTo, attack = 0.01 } = {}) {
   const t = AC.currentTime + start, o = AC.createOscillator(), g = AC.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, t);
