@@ -8,8 +8,13 @@ waits for an answer, then leaves through the opposite edge.
 - **Remind later** → sad trombone, and it's back in 5 minutes (until 18:00)
 - **No answer** for 5 minutes → it leaves and waits for the next hour
 
-It runs as a transparent full-screen overlay that clicks pass straight through,
-except over the two buttons. No Dock icon, no menu bar item.
+Every answer is logged, so **clicking the app opens a dashboard** instead of a
+reminder: glasses today against your goal, your streak, the last 14 days drunk vs
+snoozed, a 12-week heatmap, and the recent log. There's a **+ Log a glass** button
+for the ones you drink without being asked, and a **Settings** tab for the schedule.
+
+The reminder itself runs as a transparent full-screen overlay that clicks pass
+straight through, except over the two buttons. No Dock icon, no menu bar item.
 
 ## Get the app
 
@@ -56,16 +61,55 @@ instead of a binary.
 
 | | |
 | --- | --- |
-| Run it now | `open -a WaterReminder` |
-| Change the schedule | clone the repo (see below), edit the hours and days in `install.sh`, run `./install.sh` |
+| Open the dashboard | `open -a WaterReminder` |
+| Trigger a reminder now | `WaterReminder --remind`, or **Settings → Test reminder** |
+| Change the schedule | dashboard → **Settings** |
 | Uninstall | `curl -fsSL https://raw.githubusercontent.com/AlishThapa/water-reminder/main/install.sh \| zsh -s -- --uninstall` |
 
-Default schedule is hourly, 09:00–17:00, Sunday–Friday. Snooze is 5 minutes and
-the app stops asking after 18:00 — both are constants at the top of `main.swift`.
+Default schedule is hourly, 09:00–17:00, Sunday–Friday, with a 5 minute snooze that
+gives up after 18:00. All of it is editable in Settings.
+
+## Settings
+
+The **Settings** tab in the dashboard covers everything there is to change:
+
+| | |
+| --- | --- |
+| Remind me | the hourly schedule, on or off |
+| Hours | first and last reminder of the day |
+| Days | which weekdays it runs |
+| Entrance | surprise me, or pin it to walking / bike / skateboard / surf / parachute / falling in, or to one edge |
+| Volume | the jingles and sound effects |
+| Snooze for | how long **Remind me later** waits |
+| Stop asking after | a snooze past this hour gives up for the day |
+| Daily goal | glasses that count as a full day |
+| Test reminder | runs one right now, dashboard stays open |
+| Clear history | deletes the log |
+
+Changing the hours, days, or the on/off switch rewrites the LaunchAgent and reloads
+it on the spot — no reinstall, no editing plists by hand. Reduce Motion still wins
+over the entrance setting: with it on, he only ever walks in from a side.
+
+## Where the data lives
+
+```
+~/Library/Application Support/WaterReminder/log.jsonl      answers
+~/Library/Application Support/WaterReminder/settings.json  settings
+```
+
+The log is one JSON object per line — `{"t":"<ISO 8601>","a":"yes"|"later"|"away"|"glass"}`
+— appended as you answer. Delete the file to start over; it's plain text, so it's easy
+to graph elsewhere or sync yourself.
+
+**Upgrading from a version without the dashboard?** Re-run the installer. The schedule
+now launches the app with `--remind`, and an old LaunchAgent would pop the dashboard on
+the hour instead of the character.
 
 Handy flags when running the binary directly:
 
 ```sh
+WaterReminder                      # no arguments: the dashboard
+WaterReminder --remind             # the reminder overlay (what the schedule runs)
 WaterReminder --from left:surf     # force an entrance (left|right|top|bottom)
 WaterReminder --snapshot ./shots   # play a scripted run, save PNGs
 ```
@@ -80,8 +124,9 @@ cd water-reminder
 
 | Path | What it is |
 | --- | --- |
-| `main.swift` | AppKit overlay window hosting a WKWebView |
+| `main.swift` | AppKit overlay + dashboard windows, settings, the LaunchAgent writer |
 | `web/index.html` | The character, animations, and banner UI |
+| `web/dashboard.html` | The tracking dashboard and the settings panel |
 | `web/three.min.js` | [three.js r147](https://github.com/mrdoob/three.js/blob/r147/build/three.min.js), unmodified |
 | `web/RoomEnvironment.js` | Lighting environment, [`examples/js/environments/RoomEnvironment.js` from r147](https://github.com/mrdoob/three.js/blob/r147/examples/js/environments/RoomEnvironment.js), unmodified |
 | `AppIcon.icns` | App icon (the character, rendered with `--snapshot`) |
